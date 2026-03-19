@@ -119,7 +119,7 @@ def main():
     with ReusableTCPServer(("127.0.0.1", args.port), lambda *a, **k: handler(*a, directory=str(nicxlive_root), **k)) as httpd:
         print(f"serving nicxlive root: {nicxlive_root}")
         print(f"models mapping: /models/* -> {models_root}")
-        print(f"open: http://127.0.0.1:{args.port}/wasm/index.html")
+        print(f"open: http://127.0.0.1:{args.port}/index.html")
         httpd.serve_forever()
 
 
