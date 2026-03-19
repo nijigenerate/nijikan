@@ -1,0 +1,1450 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="nicxlive" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <title>nicxlive wasm webgl test</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #111;
+      color: #ddd;
+      font-family: monospace;
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      min-height: 100svh;
+    }
+    #ui {
+      padding:
+        calc(env(safe-area-inset-top, 0px) + 8px)
+        calc(env(safe-area-inset-right, 0px) + 8px)
+        8px
+        calc(env(safe-area-inset-left, 0px) + 8px);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      overflow: hidden;
+      white-space: normal;
+      flex: 0 0 auto;
+    }
+    #workspace {
+      display: flex;
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    #paramPanel {
+      box-sizing: border-box;
+      width: clamp(64px, 24vw, 420px);
+      min-width: 64px;
+      max-width: 520px;
+      padding: 8px;
+      border-top: 1px solid #333;
+      border-right: 1px solid #333;
+      overflow: auto;
+      background: #101010;
+      container-type: inline-size;
+    }
+    #viewer { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .paramRow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "name value"
+        "ctrl ctrl";
+      align-items: center;
+      gap: 6px 8px;
+      margin-bottom: 10px;
+      padding: 6px 6px 8px;
+      border: 1px solid #232323;
+      border-radius: 6px;
+      background: #131313;
+    }
+    .paramRow code { color: #9ad; }
+    .paramVal {
+      color: #9f9;
+      justify-self: end;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .paramRow2D {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "name value"
+        "ctrl ctrl";
+      align-items: start;
+      gap: 6px 8px;
+      margin-bottom: 10px;
+      padding: 6px 6px 8px;
+      border: 1px solid #232323;
+      border-radius: 6px;
+      background: #131313;
+    }
+    .paramRow > code, .paramRow2D > code { grid-area: name; min-width: 0; overflow-wrap: anywhere; }
+    .paramRow > .paramVal, .paramRow2D > .paramVal { grid-area: value; }
+    .paramCtrl {
+      grid-area: ctrl;
+      width: 100%;
+      justify-self: stretch;
+      min-width: 0;
+    }
+    .xyPad {
+      width: 120px;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      min-height: 120px;
+      border: 1px solid #444;
+      background:
+        linear-gradient(#0000 49%, #333 50%, #0000 51%),
+        linear-gradient(90deg, #0000 49%, #333 50%, #0000 51%),
+        #151515;
+      position: relative;
+      touch-action: none;
+      cursor: crosshair;
+      user-select: none;
+    }
+    .xyDot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9f9;
+      border: 1px solid #071;
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .paramSlider {
+      width: 100%;
+      accent-color: #6fd18b;
+    }
+    #cv {
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      display: block;
+      touch-action: none;
+      overscroll-behavior: contain;
+    }
+    #log { display: none; }
+    button { cursor: pointer; }
+    select, #modelCombo {
+      min-width: 220px;
+      width: min(42vw, 360px);
+      background: #181818;
+      color: #ddd;
+      border: 1px solid #444;
+      padding: 4px 6px;
+    }
+    #modelComboBox {
+      position: relative;
+      display: inline-flex;
+      align-items: stretch;
+      flex: 1 1 300px;
+      width: clamp(140px, 46vw, 680px);
+      min-width: 140px;
+      max-width: min(78vw, 680px);
+    }
+    #modelCombo {
+      width: 100%;
+      min-width: 0;
+      border-right: 0;
+    }
+    #modelComboToggle {
+      width: 30px;
+      border: 1px solid #444;
+      background: #222;
+      color: #ddd;
+      padding: 0;
+    }
+    #modelOptionsPopup {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 30;
+      background: #121212;
+      border: 1px solid #444;
+      width: 320px;
+      max-width: calc(100vw - 16px);
+      max-height: min(70vh, 620px);
+      overflow: auto;
+      box-shadow: 0 8px 20px #0008;
+    }
+    .modelOptionsMeta {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #1a1a1a;
+      color: #9ab49a;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-bottom: 1px solid #333;
+    }
+    .modelOption {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid #2d2d2d;
+      background: #121212;
+      color: #ddd;
+      text-align: left;
+      padding: 5px 8px;
+      font: inherit;
+      cursor: pointer;
+      display: block;
+    }
+    .modelOption:hover,
+    .modelOption:focus-visible {
+      background: #1f2d1f;
+      outline: none;
+    }
+    .modelOptionCustom {
+      background: #182218;
+      border-bottom-color: #2f4a2f;
+      color: #bde6bd;
+      font-style: italic;
+    }
+    .modelOptionName {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #scale { width: 120px; }
+    #ui > * { flex: 0 0 auto; max-width: 100%; }
+    @media (max-width: 980px) {
+      #modelComboBox {
+        width: clamp(120px, 58vw, 560px);
+        min-width: 120px;
+      }
+    }
+    @media (max-width: 680px) {
+      #modelComboBox {
+        width: clamp(96px, 64vw, 460px);
+        min-width: 96px;
+      }
+    }
+    @media (max-width: 900px) {
+      #ui {
+        padding: 6px;
+        gap: 6px;
+      }
+      #modelComboBox {
+        flex: 1 1 180px;
+        width: min(100%, 420px);
+        max-width: 100%;
+        min-width: 96px;
+      }
+      #modelCombo {
+        min-width: 0;
+      }
+      #scale {
+        width: 86px;
+      }
+      #paramPanel {
+        width: clamp(64px, 22vw, 160px);
+        min-width: 64px;
+        max-width: 180px;
+      }
+      #viewer {
+        min-width: 0;
+      }
+    }
+    @media (max-width: 680px) {
+      #paramPanel {
+        width: clamp(64px, 20vw, 128px);
+        min-width: 64px;
+        max-width: 140px;
+      }
+    }
+    @media (orientation: portrait) and (max-width: 1100px) {
+      #ui {
+        gap: 5px;
+        padding: 6px;
+      }
+      #modelComboBox {
+        flex-basis: 220px;
+        width: clamp(96px, 42vw, 340px);
+        max-width: 56vw;
+      }
+      #scale {
+        width: 88px;
+      }
+      #ui label {
+        font-size: 11px;
+      }
+      #ui button {
+        padding: 3px 6px;
+      }
+    }
+    @container (max-width: 120px) {
+      .paramRow, .paramRow2D {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "name"
+          "ctrl";
+        gap: 2px;
+        padding: 3px 2px 4px;
+        margin-bottom: 6px;
+      }
+      .paramRow code, .paramRow2D code {
+        font-size: 10px;
+        line-height: 1.1;
+      }
+      .paramVal {
+        display: none;
+      }
+      .paramCtrl, .paramSlider {
+        width: 100%;
+        min-width: 0;
+      }
+      .xyPad {
+        width: min(100%, 56px);
+        max-width: 56px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 56px;
+      }
+    }
+    @container (min-width: 121px) and (max-width: 180px) {
+      .paramRow, .paramRow2D {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          "name"
+          "value"
+          "ctrl";
+        gap: 4px;
+        padding: 5px 4px 6px;
+      }
+      .paramVal {
+        justify-self: start;
+        text-align: left;
+        font-size: 11px;
+      }
+      .paramRow code, .paramRow2D code {
+        font-size: 11px;
+        line-height: 1.2;
+      }
+      .paramCtrl {
+        width: 100%;
+      }
+      .paramSlider {
+        width: 100%;
+      }
+      .xyPad {
+        width: min(100%, 72px);
+        max-width: 72px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 72px;
+      }
+    }
+    @container (min-width: 181px) and (max-width: 240px) {
+      .paramRow, .paramRow2D {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          "name"
+          "ctrl"
+          "value";
+      }
+      .paramVal {
+        justify-self: start;
+        text-align: left;
+        font-size: 12px;
+      }
+      .paramCtrl {
+        width: min(100%, 120px);
+      }
+      .paramSlider {
+        width: min(100%, 120px);
+      }
+      .xyPad {
+        width: 80px;
+        max-width: 80px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 80px;
+      }
+    }
+    @container (min-width: 241px) and (max-width: 319px) {
+      .paramCtrl {
+        width: min(100%, 146px);
+      }
+      .paramSlider {
+        width: min(100%, 146px);
+      }
+      .xyPad {
+        width: 92px;
+        max-width: 92px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 92px;
+      }
+    }
+    @container (min-width: 320px) {
+      .paramRow {
+        grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) auto;
+        grid-template-areas: "name ctrl value";
+        align-items: center;
+      }
+      .paramRow2D {
+        grid-template-columns: minmax(120px, 1fr) auto auto;
+        grid-template-areas: "name ctrl value";
+        align-items: start;
+      }
+      .paramCtrl {
+        width: min(100%, 180px);
+        justify-self: start;
+      }
+      .paramSlider {
+        width: min(100%, 180px);
+      }
+      .xyPad {
+        width: 120px;
+        max-width: 120px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 120px;
+      }
+    }
+    @container (min-width: 360px) {
+      .paramRow {
+        grid-template-columns: minmax(150px, 1fr) minmax(140px, 1fr) auto;
+      }
+      .paramRow2D {
+        grid-template-columns: minmax(150px, 1fr) auto auto;
+      }
+      .paramCtrl {
+        width: min(100%, 200px);
+      }
+      .paramSlider {
+        width: min(100%, 200px);
+      }
+      .xyPad {
+        width: 132px;
+        max-width: 132px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 132px;
+      }
+    }
+    @container (min-width: 440px) {
+      .paramRow {
+        grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+      }
+      .paramRow2D {
+        grid-template-columns: minmax(180px, 1fr) auto auto;
+      }
+      .paramCtrl {
+        width: min(100%, 240px);
+      }
+      .paramSlider {
+        width: min(100%, 240px);
+      }
+      .xyPad {
+        width: 152px;
+        max-width: 152px;
+        height: auto;
+        aspect-ratio: 1 / 1;
+        min-height: 152px;
+      }
+    }
+
+    /* Whole-workspace width modes (default / narrow / wide) */
+    @media (max-width: 980px) {
+      #paramPanel {
+        width: clamp(72px, 22vw, 180px);
+        min-width: 72px;
+        max-width: 220px;
+      }
+    }
+    @media (min-width: 1600px) {
+      #paramPanel {
+        width: clamp(260px, 24vw, 520px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <label id="modelLabel">Model</label>
+    <div id="modelComboBox">
+      <input id="modelCombo" placeholder="select model or paste URL..." autocomplete="off" />
+      <button id="modelComboToggle" type="button" aria-label="toggle model options">▼</button>
+      <div id="modelOptionsPopup" hidden></div>
+    </div>
+    <input id="modelFileInput" type="file" accept=".inx,.inp,application/octet-stream" hidden />
+    <button id="refreshModels">refresh</button>
+    <button id="start">start</button>
+    <button id="stop" disabled>stop</button>
+    <label>scale</label>
+    <input id="scale" type="range" min="0.05" max="2.0" step="0.01" value="0.15" />
+    <span id="scaleVal">0.15</span>
+    <label for="bgColor">bg</label>
+    <input id="bgColor" type="color" value="#111111" />
+  </div>
+  <div id="workspace">
+    <div id="paramPanel"></div>
+    <div id="viewer">
+      <canvas id="cv"></canvas>
+      <pre id="log"></pre>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      initWebGLBackend,
+      renderCommands,
+      NjgRenderCommandKind,
+      MaskDrawableKind,
+      configureNicxModule,
+      loadNicxScriptOnce,
+      waitNicxRuntimeReady,
+      createNicxWasmCodec,
+      createNicxWasmBindings,
+    } from "../webgl_backend/webgl_backend.js";
+    const WASM_TEST_VERSION = "wasm-index-2026-02-28-24";
+    const WASM_TEST_LOG_ENABLED = false;
+    const logEl = document.getElementById("log");
+    const canvas = document.getElementById("cv");
+    const startBtn = document.getElementById("start");
+    const stopBtn = document.getElementById("stop");
+    const scaleInput = document.getElementById("scale");
+    const scaleVal = document.getElementById("scaleVal");
+    const bgColorInput = document.getElementById("bgColor");
+    const modelLabel = document.getElementById("modelLabel");
+    const modelCombo = document.getElementById("modelCombo");
+    const modelComboBox = document.getElementById("modelComboBox");
+    const modelComboToggle = document.getElementById("modelComboToggle");
+    const modelOptionsPopup = document.getElementById("modelOptionsPopup");
+    const modelFileInput = document.getElementById("modelFileInput");
+    const refreshModelsBtn = document.getElementById("refreshModels");
+    const paramPanel = document.getElementById("paramPanel");
+    let Module = null;
+    let runtimeControl = null;
+    let isLaunching = false;
+    let wasmPrepared = false;
+    let modelEntries = [];
+    let modelSourceMode = "remote-list";
+    let selectedLocalModelFile = null;
+    let selectedLocalModelName = "";
+    const pageUrl = new URL(window.location.href);
+    const launchedAsInstalledApp = pageUrl.searchParams.get("app") === "1";
+    const forceOnlineModelList = pageUrl.searchParams.get("modelSource") === "online";
+    const installedStandalone = (() => {
+      try {
+        return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+      } catch (_) {
+        return false;
+      }
+    })();
+    const preferLocalModelFileMode = (installedStandalone || launchedAsInstalledApp) && !forceOnlineModelList;
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+      });
+    }
+
+    async function prepareWasmRuntime() {
+      if (wasmPrepared) return;
+      configureNicxModule({ buildDir: "wasm" });
+      await loadNicxScriptOnce("wasm/nicxlive.js");
+      Module = window.Module;
+      wasmPrepared = true;
+    }
+    function log(...args) {
+      if (!WASM_TEST_LOG_ENABLED) return;
+      const s = args.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+      logEl.textContent += s + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log("[wasm-test]", ...args);
+    }
+
+    function hexPreview(bytes, maxLen = 16) {
+      const n = Math.min(maxLen, bytes.length);
+      let out = "";
+      for (let i = 0; i < n; i += 1) {
+        out += bytes[i].toString(16).padStart(2, "0");
+      }
+      return out;
+    }
+
+    async function fetchModelList() {
+      const res = await fetch(`/models/__list?t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (!res.ok) {
+        throw new Error(`failed to list models: ${res.status}`);
+      }
+      const body = await res.json();
+      const arr = Array.isArray(body?.models) ? body.models : [];
+      return arr.filter((m) => typeof m === "string");
+    }
+
+    function normalizeManifestModels(raw) {
+      const source = Array.isArray(raw)
+        ? raw
+        : (Array.isArray(raw?.models) ? raw.models : null);
+      const mappedSource = source || (raw?.models && typeof raw.models === "object"
+        ? Object.entries(raw.models).map(([name, url]) => ({ name, url }))
+        : []);
+      const out = [];
+      for (const item of mappedSource) {
+        if (typeof item === "string") {
+          out.push({ name: item, url: item });
+          continue;
+        }
+        if (!item || typeof item !== "object") continue;
+        const url = String(item.url ?? item.path ?? item.model ?? "").trim();
+        if (!url) continue;
+        const name = String(item.name ?? item.title ?? item.label ?? url).trim();
+        out.push({ name: name || url, url });
+      }
+      return out;
+    }
+
+    async function fetchManifestModels() {
+      const res = await fetch(`manifest.json?t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`failed to fetch manifest.json: ${res.status}`);
+      return normalizeManifestModels(await res.json());
+    }
+
+    function setModelSourceMode(mode) {
+      modelSourceMode = mode === "local-file" ? "local-file" : "remote-list";
+      const local = modelSourceMode === "local-file";
+      modelLabel.textContent = local ? "Model File" : "Model";
+      modelComboBox.hidden = false;
+      refreshModelsBtn.hidden = false;
+      refreshModelsBtn.textContent = local ? "online list" : "refresh";
+      if (local) closeModelOptions();
+    }
+
+    async function chooseLocalModelFile() {
+      let file = null;
+      if (window.showOpenFilePicker && window.isSecureContext) {
+        const [handle] = await window.showOpenFilePicker({
+          multiple: false,
+          excludeAcceptAllOption: false,
+          types: [
+            {
+              description: "nijigenerate model",
+              accept: {
+                "application/octet-stream": [".inx", ".inp"],
+              },
+            },
+          ],
+        });
+        file = handle ? await handle.getFile() : null;
+      } else {
+        file = await new Promise((resolve) => {
+          const done = () => {
+            modelFileInput.removeEventListener("change", done);
+            const f = modelFileInput.files && modelFileInput.files[0] ? modelFileInput.files[0] : null;
+            modelFileInput.value = "";
+            resolve(f);
+          };
+          modelFileInput.addEventListener("change", done, { once: true });
+          modelFileInput.click();
+        });
+      }
+      if (!file) return null;
+      selectedLocalModelFile = file;
+      selectedLocalModelName = String(file.name || "model.inx");
+      modelCombo.value = selectedLocalModelName;
+      return file;
+    }
+
+    function openModelOptions() {
+      positionModelOptionsPopup();
+      modelOptionsPopup.hidden = false;
+      modelComboToggle.setAttribute("aria-expanded", "true");
+    }
+
+    function closeModelOptions() {
+      modelOptionsPopup.hidden = true;
+      modelComboToggle.setAttribute("aria-expanded", "false");
+    }
+
+    function renderModelOptions(filterText = "") {
+      const filter = String(filterText || "").trim().toLowerCase();
+      modelOptionsPopup.innerHTML = "";
+      let visibleCount = 0;
+      const nodes = [];
+      const localBtn = document.createElement("button");
+      localBtn.type = "button";
+      localBtn.className = "modelOption modelOptionCustom";
+      localBtn.textContent = "open local file...";
+      localBtn.title = "select .inx/.inp from local storage";
+      localBtn.addEventListener("click", async () => {
+        closeModelOptions();
+        try {
+          if (modelSourceMode !== "local-file") setModelSourceMode("local-file");
+          const file = await chooseLocalModelFile();
+          if (!file) return;
+          launchSelectedModel({ forceReload: true });
+        } catch (e) {
+          log("WARN", "file picker failed:", String(e && e.message ? e.message : e));
+        }
+      });
+      nodes.push(localBtn);
+      const customBtn = document.createElement("button");
+      customBtn.type = "button";
+      customBtn.className = "modelOption modelOptionCustom";
+      customBtn.textContent = "custom URL...";
+      customBtn.title = "paste or type model URL";
+      customBtn.addEventListener("click", () => {
+        closeModelOptions();
+        modelCombo.focus();
+        modelCombo.select?.();
+      });
+      nodes.push(customBtn);
+      for (const entry of modelEntries) {
+        const name = String(entry.name || entry.url || "");
+        const url = String(entry.url || "");
+        if (!url) continue;
+        if (filter && !name.toLowerCase().includes(filter) && !url.toLowerCase().includes(filter)) {
+          continue;
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "modelOption";
+        btn.title = url;
+        btn.dataset.url = url;
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "modelOptionName";
+        nameEl.textContent = name;
+        btn.appendChild(nameEl);
+        btn.addEventListener("click", () => {
+          modelCombo.value = url;
+          closeModelOptions();
+          launchSelectedModel({ forceReload: true });
+        });
+        nodes.push(btn);
+        visibleCount += 1;
+      }
+      const meta = document.createElement("div");
+      meta.className = "modelOptionsMeta";
+      meta.textContent = `models: ${visibleCount}/${modelEntries.length} + local/custom`;
+      modelOptionsPopup.appendChild(meta);
+      for (const n of nodes) modelOptionsPopup.appendChild(n);
+      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
+    }
+
+    function positionModelOptionsPopup() {
+      const r = modelComboBox.getBoundingClientRect();
+      const margin = 8;
+      const available = Math.max(120, window.innerWidth - margin * 2);
+      const popupMinWidth = Math.min(320, available);
+      const width = Math.min(available, Math.max(popupMinWidth, r.width));
+      const left = Math.max(margin, Math.min(r.left, window.innerWidth - margin - width));
+      modelOptionsPopup.style.left = `${left}px`;
+      modelOptionsPopup.style.top = `${Math.max(8, r.bottom + 2)}px`;
+      modelOptionsPopup.style.width = `${width}px`;
+    }
+
+    function fillModelSelect(entries) {
+      const current = String(modelCombo.value || "").trim();
+      modelEntries = Array.isArray(entries) ? entries.slice() : [];
+      renderModelOptions(current);
+      if (current) {
+        modelCombo.value = current;
+      } else if (entries.length) {
+        modelCombo.value = entries[0].url;
+      } else {
+        modelCombo.value = "";
+      }
+    }
+
+    function resolveSelectedModelUrl() {
+      const selected = String(modelCombo.value || "").trim();
+      if (!selected) throw new Error("model URL is empty");
+      return selected;
+    }
+
+    async function stageSelectedModel(codec) {
+      if (modelSourceMode !== "local-file") {
+        const modelUrl = resolveSelectedModelUrl();
+        return codec.stageInxToMemfs(modelUrl);
+      }
+      const file = selectedLocalModelFile;
+      if (!file) throw new Error("local model file is not selected");
+      const srcNameRaw = String(file.name || "model.inx").trim() || "model.inx";
+      const srcName = srcNameRaw.replace(/[^0-9A-Za-z._-]/g, "_");
+      const dst = `/assets/${srcName}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!Module.FS_createPath || !Module.FS_createDataFile) {
+        throw new Error("Emscripten FS runtime methods are missing. Rebuild wasm with FS runtime enabled.");
+      }
+      try { if (Module.FS_unlink) Module.FS_unlink(dst); } catch (_) {}
+      try { Module.FS_createPath("/", "assets", true, true); } catch (_) {}
+      Module.FS_createDataFile("/assets", srcName, bytes, true, true);
+      return dst;
+    }
+
+    if (WASM_TEST_LOG_ENABLED) {
+      console.log("[wasm-test] version:", WASM_TEST_VERSION);
+      log("version:", WASM_TEST_VERSION);
+    }
+
+    function readU32(p) { return Module.HEAPU32[p >>> 2] >>> 0; }
+
+    let wasmCodec = null;
+    function getWasmCodec() {
+      if (!wasmCodec) wasmCodec = createNicxWasmCodec(Module, { log });
+      return wasmCodec;
+    }
+
+    function getWasmBindings() {
+      return createNicxWasmBindings(getWasmCodec());
+    }
+
+    function createParameterControls(params, onChange) {
+      const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+      const num = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+      paramPanel.innerHTML = "";
+      if (!Array.isArray(params) || params.length === 0) {
+        paramPanel.textContent = "parameters: none";
+        return;
+      }
+      for (const p of params) {
+        const minX = num(p?.min?.[0], -1);
+        const minY = num(p?.min?.[1], -1);
+        const maxX = num(p?.max?.[0], 1);
+        const maxY = num(p?.max?.[1], 1);
+        const defX = clamp(num(p?.defaults?.[0], 0), minX, maxX);
+        const defY = clamp(num(p?.defaults?.[1], 0), minY, maxY);
+        const isVec2 = !!p?.isVec2 && (maxY !== minY);
+
+        if (isVec2) {
+          const row = document.createElement("div");
+          row.className = "paramRow2D";
+
+          const nameEl = document.createElement("code");
+          nameEl.textContent = String(p.name || "param");
+
+          const pad = document.createElement("div");
+          pad.className = "xyPad";
+          const ctrl = document.createElement("div");
+          ctrl.className = "paramCtrl";
+          const dot = document.createElement("div");
+          dot.className = "xyDot";
+          pad.appendChild(dot);
+          ctrl.appendChild(pad);
+
+          const valueEl = document.createElement("span");
+          valueEl.className = "paramVal";
+
+          let curX = defX;
+          let curY = defY;
+
+          const updateDotAndLabel = () => {
+            const tx = (curX - minX) / Math.max(1e-6, (maxX - minX));
+            const ty = (curY - minY) / Math.max(1e-6, (maxY - minY));
+            dot.style.left = `${(tx * 100).toFixed(3)}%`;
+            dot.style.top = `${((1 - ty) * 100).toFixed(3)}%`;
+            valueEl.textContent = `X:${curX.toFixed(3)} Y:${curY.toFixed(3)}`;
+          };
+
+          const updateFromClient = (clientX, clientY, emit) => {
+            const rect = pad.getBoundingClientRect();
+            const lx = clamp(clientX - rect.left, 0, rect.width);
+            const ly = clamp(clientY - rect.top, 0, rect.height);
+            const tx = rect.width > 0 ? (lx / rect.width) : 0;
+            const ty = rect.height > 0 ? (ly / rect.height) : 0;
+            curX = clamp(minX + tx * (maxX - minX), minX, maxX);
+            curY = clamp(minY + (1 - ty) * (maxY - minY), minY, maxY);
+            updateDotAndLabel();
+            if (emit) onChange(p, curX, curY);
+          };
+
+          pad.addEventListener("pointerdown", (ev) => {
+            if (pad.setPointerCapture) pad.setPointerCapture(ev.pointerId);
+            updateFromClient(ev.clientX, ev.clientY, true);
+          });
+          pad.addEventListener("pointermove", (ev) => {
+            if (!(ev.buttons & 1)) return;
+            updateFromClient(ev.clientX, ev.clientY, true);
+          });
+          pad.addEventListener("pointerup", (ev) => {
+            updateFromClient(ev.clientX, ev.clientY, true);
+            if (pad.releasePointerCapture) {
+              try { pad.releasePointerCapture(ev.pointerId); } catch (_) {}
+            }
+          });
+          pad.addEventListener("pointercancel", (ev) => {
+            if (pad.releasePointerCapture) {
+              try { pad.releasePointerCapture(ev.pointerId); } catch (_) {}
+            }
+          });
+
+          updateDotAndLabel();
+          onChange(p, curX, curY);
+
+          row.appendChild(nameEl);
+          row.appendChild(ctrl);
+          row.appendChild(valueEl);
+          paramPanel.appendChild(row);
+          continue;
+        }
+
+        const row = document.createElement("div");
+        row.className = "paramRow";
+        const nameEl = document.createElement("code");
+        nameEl.textContent = String(p.name || "param");
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.className = "paramSlider paramCtrl";
+        slider.min = String(minX);
+        slider.max = String(maxX);
+        slider.step = "0.001";
+        slider.value = String(defX);
+        const valueEl = document.createElement("span");
+        valueEl.className = "paramVal";
+        valueEl.textContent = `X:${defX.toFixed(3)}`;
+        slider.addEventListener("input", () => {
+          const x = clamp(Number(slider.value), minX, maxX);
+          valueEl.textContent = `X:${x.toFixed(3)}`;
+          onChange(p, x, defY);
+        });
+        row.appendChild(nameEl);
+        row.appendChild(slider);
+        row.appendChild(valueEl);
+        paramPanel.appendChild(row);
+      }
+    }
+
+    async function main() {
+      await prepareWasmRuntime();
+      await waitNicxRuntimeReady(window.Module);
+      const apis = getWasmBindings();
+      const codec = apis.codec;
+
+      const glInit = initWebGLBackend(canvas, { debugLog: false });
+      const backendCallbacks = glInit.backend.createUnityResourceCallbacks();
+      const applyBackgroundColor = () => {
+        const hex = String(bgColorInput?.value || "#111111");
+        const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+        if (!m) return;
+        const rgb = parseInt(m[1], 16);
+        const r = ((rgb >>> 16) & 0xff) / 255.0;
+        const g = ((rgb >>> 8) & 0xff) / 255.0;
+        const b = (rgb & 0xff) / 255.0;
+        glInit.backend.setClearColor(r, g, b, 1.0);
+      };
+      applyBackgroundColor();
+      bgColorInput?.addEventListener("input", applyBackgroundColor);
+
+      const addFunction = Module.addFunction;
+      if (!addFunction) throw new Error("addFunction is missing. Rebuild wasm with exported runtime method addFunction.");
+
+      const layoutPtr = codec.getMalloc()(codec.layout.SizeWasmLayout);
+      const layoutRes = apis.fnGetWasmLayout(layoutPtr);
+      if (layoutRes === codec.layout.Ok) codec.applyWasmLayout(layoutPtr);
+      else log("WARN", "njgGetWasmLayout failed:", layoutRes);
+      apis.free(layoutPtr);
+
+      const createTexturePtr = addFunction((w, h, ch, mip, fmt, rt, st, userData) => {
+        return backendCallbacks.createTexture(w, h, ch, mip, fmt, !!rt, !!st) >>> 0;
+      }, "iiiiiiiii");
+      const updateTexturePtr = addFunction((handle, data, dataLen, w, h, ch, userData) => {
+        const bytes = dataLen ? Module.HEAPU8.subarray(data, data + dataLen) : null;
+        backendCallbacks.updateTexture(handle >>> 0, bytes, dataLen >>> 0, w | 0, h | 0, ch | 0);
+      }, "viiiiiii");
+      const releaseTexturePtr = addFunction((handle, userData) => {
+        backendCallbacks.releaseTexture(handle >>> 0);
+      }, "vii");
+
+      const cfgPtr = codec.getMalloc()(codec.layout.UnityRendererConfig);
+      const cbPtr = codec.getMalloc()(codec.layout.UnityResourceCallbacks);
+      const outRendererPtr = codec.getMalloc()(codec.layout.OutPtr);
+      Module.HEAP32[(cfgPtr >>> 2) + 0] = canvas.width | 0;
+      Module.HEAP32[(cfgPtr >>> 2) + 1] = canvas.height | 0;
+      Module.HEAPU32[(cbPtr >>> 2) + 0] = 0;
+      Module.HEAPU32[(cbPtr >>> 2) + 1] = createTexturePtr >>> 0;
+      Module.HEAPU32[(cbPtr >>> 2) + 2] = updateTexturePtr >>> 0;
+      Module.HEAPU32[(cbPtr >>> 2) + 3] = releaseTexturePtr >>> 0;
+
+      apis.fnRtInit();
+      const cr = apis.fnCreateRenderer(cfgPtr, cbPtr, outRendererPtr);
+      if (cr !== codec.layout.Ok) throw new Error(`njgCreateRenderer failed: ${cr}`);
+      const renderer = readU32(outRendererPtr);
+      if (!renderer) throw new Error("renderer handle is null");
+
+      const stagedPath = await stageSelectedModel(codec);
+      log("model staged:", stagedPath);
+
+      const outPuppetPtr = codec.getMalloc()(codec.layout.OutPtr);
+      const pathPtr = codec.writeCString(stagedPath);
+      let lr = codec.layout.Failure;
+      try {
+        lr = apis.fnLoadPuppet(renderer, pathPtr, outPuppetPtr);
+      } catch (e) {
+        let stagedSize = -1;
+        try {
+          if (Module.FS_stat) stagedSize = Module.FS_stat(stagedPath).size | 0;
+          else if (Module.FS && Module.FS.stat) stagedSize = Module.FS.stat(stagedPath).size | 0;
+        } catch (_) {}
+        apis.free(pathPtr);
+        throw new Error(`njgLoadPuppet threw: ${String(e)} path=${stagedPath} size=${stagedSize}`);
+      }
+      apis.free(pathPtr);
+      if (lr !== codec.layout.Ok) throw new Error(`njgLoadPuppet failed: ${lr}`);
+      const puppet = readU32(outPuppetPtr);
+      if (!puppet) throw new Error("puppet handle is null");
+
+      if (apis.fnGetParameters && apis.fnUpdateParameters) {
+        try {
+          const outCountPtr = codec.getMalloc()(codec.layout.OutPtr);
+          Module.HEAPU32[outCountPtr >>> 2] = 0;
+          let pr = apis.fnGetParameters(puppet, 0, 0, outCountPtr);
+          if (pr === codec.layout.Ok) {
+            const count = readU32(outCountPtr);
+            if (count > 0) {
+              const infoPtr = codec.getMalloc()(count * codec.layout.SizeNjgParameterInfo);
+              pr = apis.fnGetParameters(puppet, infoPtr, count, outCountPtr);
+              if (pr === codec.layout.Ok) {
+                const params = [];
+                for (let i = 0; i < count; i += 1) {
+                  params.push(codec.decodeParameterInfo(infoPtr + i * codec.layout.SizeNjgParameterInfo));
+                }
+                createParameterControls(params, (param, x, y) => {
+                  const up = codec.getMalloc()(codec.layout.SizePuppetParameterUpdate);
+                  Module.HEAPU32[(up >>> 2) + 0] = param.uuid >>> 0;
+                  Module.HEAPF32[(up >>> 2) + 1] = x;
+                  Module.HEAPF32[(up >>> 2) + 2] = y;
+                  const rr = apis.fnUpdateParameters(puppet, up, 1);
+                  if (rr !== codec.layout.Ok) log("WARN", "njgUpdateParameters failed:", rr, "uuid", param.uuid);
+                  apis.free(up);
+                });
+              } else {
+                log("WARN", "njgGetParameters(list) failed:", pr);
+              }
+              apis.free(infoPtr);
+            } else {
+              paramPanel.textContent = "parameters: none";
+            }
+          } else {
+            log("WARN", "njgGetParameters(count) failed:", pr);
+          }
+          apis.free(outCountPtr);
+        } catch (e) {
+          log("WARN", "parameter UI unavailable:", String(e));
+        }
+      } else {
+        paramPanel.textContent = "parameters: wasm exports not available";
+      }
+
+      const frameCfgPtr = codec.getMalloc()(codec.layout.FrameConfig);
+      const cmdViewPtr = codec.getMalloc()(codec.layout.CommandQueueView);
+      const snapshotPtr = codec.getMalloc()(codec.layout.SharedBufferSnapshot);
+
+      let last = performance.now();
+      let alive = true;
+      let running = false;
+      let rafId = 0;
+      let debugFrame = 0;
+      let panX = 0.0;
+      let panY = 0.0;
+      const activePointers = new Map();
+      let panPointerId = -1;
+      let panLastX = 0;
+      let panLastY = 0;
+      let pinchState = null;
+      const onTouchGestureBlock = (ev) => {
+        ev.preventDefault();
+      };
+      const cleanup = () => {
+        if (!alive) return;
+        alive = false;
+        running = false;
+        bgColorInput?.removeEventListener("input", applyBackgroundColor);
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerUp);
+        canvas.removeEventListener("wheel", onWheel);
+        canvas.removeEventListener("touchstart", onTouchGestureBlock);
+        canvas.removeEventListener("touchmove", onTouchGestureBlock);
+        canvas.removeEventListener("gesturestart", onTouchGestureBlock);
+        canvas.removeEventListener("gesturechange", onTouchGestureBlock);
+        stopBtn.disabled = true;
+        try { apis.fnUnloadPuppet(renderer, puppet); } catch (_) {}
+        try { apis.fnDestroyRenderer(renderer); } catch (_) {}
+        try { apis.fnRtTerm(); } catch (_) {}
+      };
+      window.addEventListener("beforeunload", cleanup);
+
+      const clampScale = (v) => {
+        const min = Number(scaleInput.min || "0.05");
+        const max = Number(scaleInput.max || "2.0");
+        return Math.max(min, Math.min(max, v));
+      };
+      const currentScale = () => {
+        const s = Number(scaleInput.value || "1");
+        return Number.isFinite(s) && s > 0 ? s : 1;
+      };
+      const applyPanScale = () => {
+        const s = currentScale();
+        scaleVal.textContent = s.toFixed(2);
+        apis.fnSetPuppetScale(puppet, s, s);
+        apis.fnSetPuppetTranslation(puppet, panX, panY);
+      };
+
+      const pointerEntries = () => Array.from(activePointers.entries());
+      const pointerDistance = (a, b) => {
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        return Math.hypot(dx, dy);
+      };
+      const beginPanWith = (pointerId, point) => {
+        panPointerId = pointerId;
+        panLastX = point.x;
+        panLastY = point.y;
+      };
+      const beginPinchFromActive = () => {
+        const entries = pointerEntries();
+        if (entries.length < 2) {
+          pinchState = null;
+          return;
+        }
+        const [aId, a] = entries[0];
+        const [bId, b] = entries[1];
+        const dist = Math.max(1, pointerDistance(a, b));
+        pinchState = {
+          aId,
+          bId,
+          startDist: dist,
+          startScale: currentScale(),
+          lastCenterX: (a.x + b.x) * 0.5,
+          lastCenterY: (a.y + b.y) * 0.5,
+        };
+        panPointerId = -1;
+      };
+
+      const onPointerDown = (ev) => {
+        if (ev.pointerType === "mouse" && ev.button !== 0) return;
+        activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+        if (activePointers.size === 1) {
+          beginPanWith(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+          pinchState = null;
+          return;
+        }
+        if (activePointers.size >= 2) beginPinchFromActive();
+      };
+      const onPointerMove = (ev) => {
+        if (!activePointers.has(ev.pointerId)) return;
+        activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        if (pinchState) {
+          const a = activePointers.get(pinchState.aId);
+          const b = activePointers.get(pinchState.bId);
+          if (!a || !b) {
+            beginPinchFromActive();
+            return;
+          }
+          const dist = Math.max(1, pointerDistance(a, b));
+          const centerX = (a.x + b.x) * 0.5;
+          const centerY = (a.y + b.y) * 0.5;
+          const scale = clampScale((pinchState.startScale * dist) / pinchState.startDist);
+          scaleInput.value = scale.toFixed(3);
+          panX += (centerX - pinchState.lastCenterX) * dpr;
+          panY += (centerY - pinchState.lastCenterY) * dpr;
+          pinchState.lastCenterX = centerX;
+          pinchState.lastCenterY = centerY;
+          applyPanScale();
+          return;
+        }
+        if (ev.pointerId !== panPointerId) return;
+        const dx = ev.clientX - panLastX;
+        const dy = ev.clientY - panLastY;
+        panLastX = ev.clientX;
+        panLastY = ev.clientY;
+        panX += dx * dpr;
+        panY += dy * dpr;
+        applyPanScale();
+      };
+      const onPointerUp = (ev) => {
+        activePointers.delete(ev.pointerId);
+        if (canvas.releasePointerCapture) {
+          try { canvas.releasePointerCapture(ev.pointerId); } catch (_) {}
+        }
+        if (pinchState && (ev.pointerId === pinchState.aId || ev.pointerId === pinchState.bId)) {
+          if (activePointers.size >= 2) {
+            beginPinchFromActive();
+            return;
+          }
+          pinchState = null;
+        }
+        if (activePointers.size === 1) {
+          const [id, point] = pointerEntries()[0];
+          beginPanWith(id, point);
+          return;
+        }
+        if (activePointers.size === 0) {
+          panPointerId = -1;
+        }
+      };
+      const onWheel = (ev) => {
+        ev.preventDefault();
+        const step = ev.deltaY < 0 ? 1.1 : 1.0 / 1.1;
+        const s = clampScale(currentScale() * step);
+        scaleInput.value = s.toFixed(3);
+        applyPanScale();
+      };
+      canvas.addEventListener("pointerdown", onPointerDown);
+      canvas.addEventListener("pointermove", onPointerMove);
+      canvas.addEventListener("pointerup", onPointerUp);
+      canvas.addEventListener("pointercancel", onPointerUp);
+      canvas.addEventListener("wheel", onWheel, { passive: false });
+      canvas.addEventListener("touchstart", onTouchGestureBlock, { passive: false });
+      canvas.addEventListener("touchmove", onTouchGestureBlock, { passive: false });
+      canvas.addEventListener("gesturestart", onTouchGestureBlock, { passive: false });
+      canvas.addEventListener("gesturechange", onTouchGestureBlock, { passive: false });
+
+      function resizeCanvas() {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const w = Math.max(64, Math.floor(canvas.clientWidth * dpr));
+        const h = Math.max(64, Math.floor(canvas.clientHeight * dpr));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          glInit.drawableW = w;
+          glInit.drawableH = h;
+        }
+      }
+
+      function frame(now) {
+        if (!alive || !running) return;
+        try {
+          resizeCanvas();
+
+          const dt = Math.min(0.05, Math.max(0.0, (now - last) / 1000.0));
+          last = now;
+
+          applyPanScale();
+
+          Module.HEAP32[(frameCfgPtr >>> 2) + 0] = canvas.width | 0;
+          Module.HEAP32[(frameCfgPtr >>> 2) + 1] = canvas.height | 0;
+
+          if (apis.fnBeginFrame(renderer, frameCfgPtr) !== codec.layout.Ok) {
+            log("njgBeginFrame failed");
+            requestAnimationFrame(frame);
+            return;
+          }
+          apis.fnTickPuppet(puppet, dt);
+
+          if (apis.fnEmitCommands(renderer, cmdViewPtr) !== codec.layout.Ok) {
+            log("njgEmitCommands failed");
+            requestAnimationFrame(frame);
+            return;
+          }
+          if (apis.fnGetSharedBuffers(renderer, snapshotPtr) !== codec.layout.Ok) {
+            log("njgGetSharedBuffers failed");
+            requestAnimationFrame(frame);
+            return;
+          }
+
+          const commandsPtr = readU32(cmdViewPtr + 0);
+          const commandsCount = readU32(cmdViewPtr + 4);
+          const commands = codec.decodeCommands(commandsPtr, commandsCount);
+          const snapshot = codec.decodeSnapshot(snapshotPtr);
+          let drawPartCount = 0;
+          for (let i = 0; i < commands.length; i += 1) {
+            if (Number(commands[i]?.kind) === NjgRenderCommandKind.DrawPart) drawPartCount += 1;
+          }
+
+          debugFrame += 1;
+          if (WASM_TEST_LOG_ENABLED && (debugFrame <= 5 || (debugFrame % 60) === 0)) {
+            const firstKind = commandsCount > 0 ? commands[0]?.kind : -1;
+            log("frame", debugFrame, "cmdCount", commandsCount, "firstKind", firstKind,
+              "drawPart", drawPartCount, "v/uv/d", snapshot.vertices.data.length, snapshot.uvs.data.length, snapshot.deform.data.length);
+          }
+
+          renderCommands(glInit, snapshot, { commands });
+        } catch (e) {
+          log("frame error:", String(e && e.message ? e.message : e));
+        }
+        rafId = requestAnimationFrame(frame);
+      }
+
+      const startLoop = () => {
+        if (!alive || running) return;
+        running = true;
+        stopBtn.disabled = false;
+        last = performance.now();
+        rafId = requestAnimationFrame(frame);
+      };
+      const stopLoop = () => {
+        running = false;
+        stopBtn.disabled = true;
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+      };
+      stopBtn.onclick = stopLoop;
+
+      log("renderer ready, commands loop started");
+      startLoop();
+      return { startLoop, stopLoop, cleanup };
+    }
+
+    async function refreshModelListUI() {
+      if (preferLocalModelFileMode) {
+        setModelSourceMode("local-file");
+        fillModelSelect([]);
+        log("model source: local-file (standalone app mode)");
+        return { source: "local-file", count: selectedLocalModelFile ? 1 : 0 };
+      }
+
+      let manifestModels = null;
+      let manifestError = null;
+      try {
+        manifestModels = await fetchManifestModels();
+      } catch (e) {
+        manifestError = e;
+      }
+
+      if (manifestModels && manifestModels.length > 0) {
+        setModelSourceMode("remote-list");
+        fillModelSelect(manifestModels);
+        log("manifest models listed:", manifestModels.length);
+        return { source: "manifest", count: manifestModels.length };
+      }
+
+      try {
+        const models = await fetchModelList();
+        const entries = models.map((m) => ({ name: m, url: m }));
+        setModelSourceMode("remote-list");
+        fillModelSelect(entries);
+        log("models listed:", entries.length);
+        return { source: "model-list", count: entries.length };
+      } catch (e) {
+        const manifestUnavailable = manifestError || manifestModels == null;
+        if (manifestUnavailable) {
+          setModelSourceMode("local-file");
+          fillModelSelect([]);
+          if (manifestError) {
+            log("WARN", "manifest fetch failed:", String(manifestError && manifestError.message ? manifestError.message : manifestError));
+          }
+          log("model source switched to local file mode");
+          return { source: "local-file", count: selectedLocalModelFile ? 1 : 0 };
+        }
+        setModelSourceMode("remote-list");
+        fillModelSelect([]);
+        log("WARN", "model list fetch failed:", String(e && e.message ? e.message : e));
+        return { source: "error", count: 0 };
+      }
+    }
+
+    refreshModelsBtn.addEventListener("click", () => {
+      if (modelSourceMode === "local-file") {
+        setModelSourceMode("remote-list");
+      }
+      refreshModelListUI();
+    });
+
+    async function launchSelectedModel({ forceReload = false } = {}) {
+      if (isLaunching) return;
+      isLaunching = true;
+      startBtn.disabled = true;
+      try {
+        if (runtimeControl && forceReload) {
+          try { runtimeControl.cleanup(); } catch (_) {}
+          runtimeControl = null;
+        }
+        if (runtimeControl) {
+          runtimeControl.startLoop();
+          return;
+        }
+        runtimeControl = await main();
+      } catch (e) {
+        log("ERROR:", String(e && e.message ? e.message : e));
+      } finally {
+        startBtn.disabled = false;
+        isLaunching = false;
+      }
+    }
+
+    startBtn.addEventListener("click", () => {
+      launchSelectedModel({ forceReload: false });
+    });
+    modelCombo.addEventListener("focus", () => {
+      renderModelOptions("");
+      openModelOptions();
+    });
+    modelComboToggle.addEventListener("click", () => {
+      if (!modelOptionsPopup.hidden) {
+        closeModelOptions();
+        return;
+      }
+      renderModelOptions("");
+      openModelOptions();
+      modelCombo.focus();
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (modelComboBox.contains(ev.target)) return;
+      closeModelOptions();
+    });
+    window.addEventListener("resize", () => {
+      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
+    });
+    window.addEventListener("scroll", () => {
+      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
+    }, true);
+
+    modelCombo.addEventListener("change", () => {
+      if (!String(modelCombo.value || "").trim()) return;
+      launchSelectedModel({ forceReload: true });
+    });
+    modelCombo.addEventListener("input", () => {
+      renderModelOptions(modelCombo.value || "");
+      openModelOptions();
+    });
+    modelCombo.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        closeModelOptions();
+        return;
+      }
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      closeModelOptions();
+      if (!String(modelCombo.value || "").trim()) return;
+      launchSelectedModel({ forceReload: true });
+    });
+
+    const initModelList = await refreshModelListUI();
+    if (initModelList?.source === "manifest" && (initModelList.count | 0) >= 2) {
+      launchSelectedModel({ forceReload: false });
+    }
+  </script>
+</body>
+</html>
