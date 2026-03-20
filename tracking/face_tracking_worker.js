@@ -104,6 +104,7 @@ function downgradeToCpuDelegate(reason) {
   self.postMessage({
     type: "tracking-warning",
     warning: `GPU delegate unavailable, falling back to CPU: ${reason}`,
+    delegate: state.config.delegate,
   });
   return true;
 }
@@ -270,6 +271,7 @@ function buildTrackingFrame(result) {
   const { rotationMatrix } = computeFixedRotationMatrix(triplets);
   const quat = rotationMatrixToQuaternion(rotationMatrix);
   const euler = rotationMatrixToEulerZxy(rotationMatrix);
+  euler.yaw = -euler.yaw;
   const rightGaze = getGazeRight(landmarks);
   const leftGaze = getGazeLeft(landmarks);
   const nose = landmarks[NOSE_TIP];
@@ -351,7 +353,7 @@ self.onmessage = async (event) => {
     if (requiresRecreate) {
       closeFaceLandmarker();
     }
-    self.postMessage({ type: "tracking-ready" });
+    self.postMessage({ type: "tracking-ready", delegate: state.config.delegate });
     return;
   }
   const inputFrame = data.videoFrame || data.bitmap || null;

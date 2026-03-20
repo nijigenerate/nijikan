@@ -9,60 +9,394 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
   <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
   <title>nicxlive wasm webgl test</title>
   <style>
+    :root {
+      --bg: #f4f7fb;
+      --bg-2: #eef3f8;
+      --panel: rgba(255, 255, 255, 0.72);
+      --line: rgba(30, 41, 59, 0.12);
+      --text: #1f2937;
+      --text-dim: #64748b;
+      --accent: #2f7df6;
+      --accent-soft: rgba(47, 125, 246, 0.14);
+      --shadow: 0 18px 48px rgba(37, 53, 81, 0.12);
+      --rail-collapsed: 62px;
+      --rail-expanded: 210px;
+      --overlay-width: min(960px, calc((100vw - var(--rail-collapsed) - (var(--outer-gap) * 2) - var(--nav-gap)) * 0.7));
+      --params-overlay-width: clamp(72px, 22vw, 360px);
+      --outer-gap: 18px;
+      --nav-gap: 18px;
+    }
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
-      background: #111;
-      color: #ddd;
-      font-family: monospace;
+      background:
+        radial-gradient(circle at top left, rgba(102, 148, 205, 0.16), transparent 30%),
+        radial-gradient(circle at 80% 10%, rgba(126, 163, 214, 0.12), transparent 24%),
+        linear-gradient(180deg, var(--bg-2), var(--bg));
+      color: var(--text);
+      font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
       overflow: hidden;
       overscroll-behavior: none;
     }
     body {
-      display: flex;
-      flex-direction: column;
       height: 100dvh;
       min-height: 100svh;
     }
-    #ui {
-      padding:
-        calc(env(safe-area-inset-top, 0px) + 8px)
-        calc(env(safe-area-inset-right, 0px) + 8px)
-        8px
-        calc(env(safe-area-inset-left, 0px) + 8px);
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
+    #appShell {
+      position: relative;
+      width: 100%;
+      height: 100%;
       overflow: hidden;
-      white-space: normal;
+    }
+    #stage {
+      position: absolute;
+      inset: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    #viewer {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-shadow: none;
+    }
+    #navRail {
+      position: absolute;
+      top: calc(env(safe-area-inset-top, 0px) + var(--outer-gap));
+      left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap));
+      bottom: calc(env(safe-area-inset-bottom, 0px) + var(--outer-gap));
+      z-index: 30;
+      width: var(--rail-collapsed);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      box-sizing: border-box;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.84);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      overflow: hidden;
+      transition: width 180ms ease, opacity 220ms ease, background-color 220ms ease, border-color 220ms ease;
+    }
+    body.nav-expanded #navRail {
+      width: var(--rail-expanded);
+    }
+    body.nav-faded:not(.nav-expanded):not(.nav-overlay-open) #navRail {
+      opacity: 0.22;
+      background: rgba(255, 255, 255, 0.4);
+      border-color: rgba(30, 41, 59, 0.06);
+    }
+    .navSpacer {
+      flex: 1 1 auto;
+    }
+    .navButton {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 16px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      transition: background-color 160ms ease, color 160ms ease;
+    }
+    .navButton:hover,
+    .navButton:focus-visible {
+      background: rgba(15, 23, 42, 0.05);
+      outline: none;
+    }
+    .navButton.is-active {
+      background: var(--accent-soft);
+      color: #0f3f91;
+    }
+    .navLabel {
+      opacity: 0;
+      transform: translateX(-8px);
+      transition: opacity 140ms ease, transform 140ms ease;
+      white-space: nowrap;
+      font-size: 14px;
+      letter-spacing: 0.03em;
+    }
+    body.nav-expanded .navLabel {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .material-symbols-rounded {
+      font-variation-settings:
+        "FILL" 0,
+        "wght" 500,
+        "GRAD" 0,
+        "opsz" 24;
+      font-size: 22px;
+      line-height: 1;
       flex: 0 0 auto;
     }
-    #workspace {
+    #overlayBackdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 24;
+      background: rgba(148, 163, 184, 0.14);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+    body.nav-overlay-open #overlayBackdrop {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #overlayPanel {
+      position: absolute;
+      top: 50%;
+      left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + var(--rail-collapsed) + var(--nav-gap) + ((100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2) - var(--rail-collapsed) - var(--nav-gap) - var(--overlay-width)) / 2));
+      z-index: 32;
+      width: var(--overlay-width);
+      max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2) - var(--rail-collapsed) - var(--nav-gap));
+      height: min(78vh, calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--outer-gap) * 2)));
+      max-height: min(78vh, calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--outer-gap) * 2)));
       display: flex;
-      width: 100%;
+      flex-direction: column;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+      overflow: hidden;
+      opacity: 0;
+      transform: translate(-12px, -50%);
+      pointer-events: none;
+      transition: opacity 170ms ease, transform 170ms ease;
+    }
+    body.nav-expanded #overlayPanel {
+      left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + var(--rail-expanded) + var(--nav-gap) + ((100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2) - var(--rail-expanded) - var(--nav-gap) - var(--overlay-width)) / 2));
+    }
+    body.nav-overlay-open #overlayPanel {
+      opacity: 1;
+      transform: translate(0, -50%);
+      pointer-events: auto;
+    }
+    body[data-active-overlay="params"] #overlayPanel {
+      top: calc(env(safe-area-inset-top, 0px) + var(--outer-gap));
+      left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + var(--rail-collapsed) + 10px);
+      width: min(var(--params-overlay-width), calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - var(--rail-collapsed) - (var(--outer-gap) * 2) - 10px));
+      max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - var(--rail-collapsed) - (var(--outer-gap) * 2) - 10px);
+      height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--outer-gap) * 2));
+      max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--outer-gap) * 2));
+      transform: translate(-12px, 0);
+    }
+    body.nav-expanded[data-active-overlay="params"] #overlayPanel {
+      left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + var(--rail-expanded) + 10px);
+    }
+    body.nav-overlay-open[data-active-overlay="params"] #overlayPanel {
+      transform: translate(0, 0);
+    }
+    .overlayHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px 8px;
+      border-bottom: 0;
+      background: transparent;
+    }
+    .overlayTitleWrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    #overlayTitle {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+    #overlaySubtitle {
+      margin-top: 2px;
+      color: var(--text-dim);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .overlayCloseBtn {
+      display: inline-block;
+      width: auto;
+      height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 28px;
+      line-height: 1;
+    }
+    .overlayBody {
       flex: 1 1 auto;
       min-height: 0;
-      overflow: hidden;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      position: relative;
+    }
+    .overlaySection {
+      display: none;
+      height: 100%;
+      min-height: 0;
+      padding: 18px;
+      box-sizing: border-box;
+      overflow: auto;
+      scrollbar-gutter: stable both-edges;
+    }
+    .overlaySection.is-active {
+      display: block;
+    }
+    .overlaySectionPlain {
+      padding: 10px 10px 12px;
+    }
+    .overlayStack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .overlayCard {
+      padding: 14px;
+      border: 1px solid rgba(30, 41, 59, 0.08);
+      border-radius: 18px;
+      background: rgba(248, 250, 252, 0.76);
+    }
+    .overlayCardTitle {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--text-dim);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .controlGrid {
+      display: grid;
+      gap: 12px;
+    }
+    .controlRow {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .buttonRow {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .buttonRow > button {
+      flex: 1 1 120px;
+      min-height: 42px;
+      border-radius: 12px;
+      border: 1px solid rgba(30, 41, 59, 0.12);
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+      padding: 0 14px;
+    }
+    .buttonRow > button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    .trackingSwitchRow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .trackingControlStack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .switchField {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .switchField input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .switchTrack {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.55);
+      transition: background-color 140ms ease;
+      flex: 0 0 auto;
+    }
+    .switchTrack::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
+      transition: transform 140ms ease;
+    }
+    .switchField input:checked + .switchTrack {
+      background: rgba(47, 125, 246, 0.72);
+    }
+    .switchField input:checked + .switchTrack::after {
+      transform: translateX(18px);
+    }
+    .switchText {
+      font-size: 14px;
+      color: var(--text);
+    }
+    .trackingHiddenButton {
+      display: none;
+    }
+    .statusLine {
+      color: #315ea8;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .metaLine {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-left: auto;
     }
     #paramPanel {
-      box-sizing: border-box;
-      width: clamp(64px, 24vw, 420px);
-      min-width: 64px;
-      max-width: 520px;
-      padding: 8px;
-      border-top: 1px solid #333;
-      border-right: 1px solid #333;
-      overflow: auto;
-      background: #101010;
       container-type: inline-size;
     }
-    #viewer { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .overlaySectionPlain #paramPanel {
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
     .paramRow {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -73,11 +407,11 @@
       gap: 6px 8px;
       margin-bottom: 10px;
       padding: 6px 6px 8px;
-      border: 1px solid #232323;
-      border-radius: 6px;
-      background: #131313;
+      border: 1px solid rgba(30, 41, 59, 0.1);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.92);
     }
-    .paramRow code { color: #9ad; }
+    .paramRow code { color: #315ea8; }
     .paramRow2D {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -88,9 +422,9 @@
       gap: 6px 8px;
       margin-bottom: 10px;
       padding: 6px 6px 8px;
-      border: 1px solid #232323;
-      border-radius: 6px;
-      background: #131313;
+      border: 1px solid rgba(30, 41, 59, 0.1);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.92);
     }
     .paramRow > code, .paramRow2D > code { grid-area: name; min-width: 0; overflow-wrap: anywhere; }
     .paramCtrl {
@@ -106,9 +440,9 @@
       min-height: 120px;
       border: 1px solid #444;
       background:
-        linear-gradient(#0000 49%, #333 50%, #0000 51%),
-        linear-gradient(90deg, #0000 49%, #333 50%, #0000 51%),
-        #151515;
+        linear-gradient(#0000 49%, rgba(148, 163, 184, 0.7) 50%, #0000 51%),
+        linear-gradient(90deg, #0000 49%, rgba(148, 163, 184, 0.7) 50%, #0000 51%),
+        rgba(255, 255, 255, 0.85);
       position: relative;
       touch-action: none;
       cursor: crosshair;
@@ -118,15 +452,15 @@
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #9f9;
-      border: 1px solid #071;
+      background: var(--accent);
+      border: 1px solid rgba(15, 63, 145, 0.45);
       position: absolute;
       transform: translate(-50%, -50%);
       pointer-events: none;
     }
     .paramSlider {
       width: 100%;
-      accent-color: #6fd18b;
+      accent-color: var(--accent);
     }
     #cv {
       flex: 1;
@@ -137,80 +471,77 @@
       overscroll-behavior: contain;
     }
     #log { display: none; }
+    button, input, select { font: inherit; }
     button { cursor: pointer; }
     select, #modelCombo {
-      min-width: 220px;
-      width: min(42vw, 360px);
-      background: #181818;
-      color: #ddd;
-      border: 1px solid #444;
-      padding: 4px 6px;
+      min-width: 0;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(30, 41, 59, 0.14);
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--text);
+      box-sizing: border-box;
     }
     #modelComboBox {
-      position: relative;
-      display: inline-flex;
+      display: flex;
       align-items: stretch;
-      flex: 1 1 300px;
-      width: clamp(140px, 46vw, 680px);
-      min-width: 140px;
-      max-width: min(78vw, 680px);
-    }
-    #modelCombo {
+      gap: 8px;
       width: 100%;
       min-width: 0;
-      border-right: 0;
+    }
+    #modelCombo {
+      flex: 1 1 auto;
     }
     #modelComboToggle {
-      width: 30px;
-      border: 1px solid #444;
-      background: #222;
-      color: #ddd;
+      width: 44px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(30, 41, 59, 0.14);
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--text);
       padding: 0;
+      border-radius: 12px;
     }
     #modelOptionsPopup {
-      position: fixed;
-      top: 0;
-      left: 0;
-      z-index: 30;
-      background: #121212;
-      border: 1px solid #444;
-      width: 320px;
-      max-width: calc(100vw - 16px);
-      max-height: min(70vh, 620px);
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(30, 41, 59, 0.1);
+      width: 100%;
+      max-height: min(48vh, 520px);
       overflow: auto;
-      box-shadow: 0 8px 20px #0008;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+      border-radius: 16px;
     }
     .modelOptionsMeta {
       position: sticky;
       top: 0;
       z-index: 1;
-      background: #1a1a1a;
-      color: #9ab49a;
+      background: rgba(241, 245, 249, 0.98);
+      color: #5f6f84;
       font-size: 11px;
-      padding: 4px 8px;
-      border-bottom: 1px solid #333;
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.08);
     }
     .modelOption {
       width: 100%;
       border: 0;
-      border-bottom: 1px solid #2d2d2d;
-      background: #121212;
-      color: #ddd;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.08);
+      background: transparent;
+      color: var(--text);
       text-align: left;
-      padding: 5px 8px;
+      padding: 10px 12px;
       font: inherit;
       cursor: pointer;
       display: block;
     }
     .modelOption:hover,
     .modelOption:focus-visible {
-      background: #1f2d1f;
+      background: rgba(47, 125, 246, 0.1);
       outline: none;
     }
     .modelOptionCustom {
-      background: #182218;
-      border-bottom-color: #2f4a2f;
-      color: #bde6bd;
+      background: rgba(47, 125, 246, 0.08);
+      border-bottom-color: rgba(47, 125, 246, 0.16);
+      color: #214e95;
       font-style: italic;
     }
     .modelOptionName {
@@ -219,86 +550,16 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    #scale { width: 120px; }
-    #trackingStatus {
-      color: #b8d8ff;
-      min-width: 120px;
-      max-width: min(48vw, 520px);
-      white-space: normal;
-      overflow-wrap: anywhere;
-      font-size: 12px;
-    }
+    #scale { width: 100%; accent-color: var(--accent); }
     #trackingVideo {
       display: none !important;
     }
     #trackingVideo[hidden] {
       display: none;
     }
-    #ui > * { flex: 0 0 auto; max-width: 100%; }
-    @media (max-width: 980px) {
-      #modelComboBox {
-        width: clamp(120px, 58vw, 560px);
-        min-width: 120px;
-      }
-    }
-    @media (max-width: 680px) {
-      #modelComboBox {
-        width: clamp(96px, 64vw, 460px);
-        min-width: 96px;
-      }
-    }
-    @media (max-width: 900px) {
-      #ui {
-        padding: 6px;
-        gap: 6px;
-      }
-      #modelComboBox {
-        flex: 1 1 180px;
-        width: min(100%, 420px);
-        max-width: 100%;
-        min-width: 96px;
-      }
-      #modelCombo {
-        min-width: 0;
-      }
-      #scale {
-        width: 86px;
-      }
-      #paramPanel {
-        width: clamp(64px, 22vw, 160px);
-        min-width: 64px;
-        max-width: 180px;
-      }
-      #viewer {
-        min-width: 0;
-      }
-    }
-    @media (max-width: 680px) {
-      #paramPanel {
-        width: clamp(64px, 20vw, 128px);
-        min-width: 64px;
-        max-width: 140px;
-      }
-    }
-    @media (orientation: portrait) and (max-width: 1100px) {
-      #ui {
-        gap: 5px;
-        padding: 6px;
-      }
-      #modelComboBox {
-        flex-basis: 220px;
-        width: clamp(96px, 42vw, 340px);
-        max-width: 56vw;
-      }
-      #scale {
-        width: 88px;
-      }
-      #ui label {
-        font-size: 11px;
-      }
-      #ui button {
-        padding: 3px 6px;
-      }
+    body.app-shell-mounted #ui,
+    body.app-shell-mounted #workspace {
+      display: none;
     }
     @container (max-width: 120px) {
       .paramRow, .paramRow2D {
@@ -458,17 +719,66 @@
       }
     }
 
-    /* Whole-workspace width modes (default / narrow / wide) */
-    @media (max-width: 980px) {
-      #paramPanel {
-        width: clamp(72px, 22vw, 180px);
-        min-width: 72px;
-        max-width: 220px;
+    @media (max-width: 860px) {
+      :root {
+        --overlay-width: calc(100vw - 36px);
+        --params-overlay-width: clamp(72px, 28vw, 280px);
+        --outer-gap: 12px;
+      }
+      #overlayPanel {
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 50px);
+        right: calc(env(safe-area-inset-right, 0px) + var(--outer-gap));
+        width: auto;
+        max-width: none;
+      }
+      body.nav-expanded #overlayPanel {
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 50px);
+      }
+      #navRail {
+        bottom: auto;
+      }
+      body[data-active-overlay="params"] #overlayPanel {
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 58px);
+        right: auto;
+      }
+      body.nav-expanded[data-active-overlay="params"] #overlayPanel {
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 58px);
       }
     }
-    @media (min-width: 1600px) {
-      #paramPanel {
-        width: clamp(260px, 24vw, 520px);
+    @media (max-width: 560px) {
+      #navRail {
+        width: 54px;
+        padding: 8px;
+      }
+      body.nav-expanded #navRail {
+        width: min(82vw, 240px);
+      }
+      .navButton {
+        min-height: 42px;
+        gap: 12px;
+        padding: 0 10px;
+      }
+      #overlayPanel {
+        top: auto;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+        left: calc(env(safe-area-inset-left, 0px) + 10px);
+        right: calc(env(safe-area-inset-right, 0px) + 10px);
+        width: auto;
+        height: min(72vh, 560px);
+        max-height: min(72vh, 560px);
+        transform: translate(0, 12px);
+      }
+      body.nav-overlay-open #overlayPanel {
+        transform: translate(0, 0);
+      }
+      body[data-active-overlay="params"] #overlayPanel {
+        top: auto;
+        left: calc(env(safe-area-inset-left, 0px) + 72px);
+        right: 10px;
+        width: auto;
+        max-width: none;
+        height: min(72vh, 560px);
+        transform: translate(0, 12px);
       }
     }
   </style>
@@ -492,7 +802,7 @@
     <input id="scale" type="range" min="0.05" max="2.0" step="0.01" value="0.15" />
     <span id="scaleVal">0.15</span>
     <label for="bgColor">bg</label>
-    <input id="bgColor" type="color" value="#111111" />
+    <input id="bgColor" type="color" value="#f4f7fb" />
   </div>
   <div id="workspace">
     <div id="paramPanel"></div>
@@ -538,6 +848,9 @@
     const modelFileInput = document.getElementById("modelFileInput");
     const refreshModelsBtn = document.getElementById("refreshModels");
     const paramPanel = document.getElementById("paramPanel");
+    const legacyUi = document.getElementById("ui");
+    const legacyWorkspace = document.getElementById("workspace");
+    const legacyViewer = document.getElementById("viewer");
     let Module = null;
     let runtimeControl = null;
     let trackingEnabled = false;
@@ -548,6 +861,10 @@
     let modelSourceMode = "remote-list";
     let selectedLocalModelFile = null;
     let selectedLocalModelName = "";
+    let activeOverlay = null;
+    let navExpanded = false;
+    let navFadeTimer = 0;
+    let lastNavPointerMoveAt = 0;
     const pageUrl = new URL(window.location.href);
     const appBaseUrl = new URL("./", pageUrl);
     const launchedAsInstalledApp = pageUrl.searchParams.get("app") === "1";
@@ -560,11 +877,332 @@
       }
     })();
     const preferLocalModelFileMode = (installedStandalone || launchedAsInstalledApp) && !forceOnlineModelList;
+    let trackingSwitchInput = null;
+    let trackingModeEl = null;
+    const NAV_FADE_DELAY_MS = 2600;
+    const overlayMeta = {
+      models: {
+        icon: "folder_open",
+        title: "Models",
+        subtitle: "Load and switch the active puppet.",
+      },
+      params: {
+        icon: "tune",
+        title: "Parameters",
+        subtitle: "Edit puppet parameters on demand.",
+      },
+      tracking: {
+        icon: "center_focus_strong",
+        title: "Tracking",
+        subtitle: "Camera tracking controls and state.",
+      },
+      view: {
+        icon: "visibility",
+        title: "View",
+        subtitle: "Viewer scale and background settings.",
+      },
+    };
+
+    function appendChildren(parent, children) {
+      for (const child of children) {
+        if (child) parent.appendChild(child);
+      }
+      return parent;
+    }
+
+    function createOverlayCard(title, children) {
+      const card = document.createElement("div");
+      card.className = "overlayCard";
+      const heading = document.createElement("span");
+      heading.className = "overlayCardTitle";
+      heading.textContent = title;
+      card.appendChild(heading);
+      appendChildren(card, children);
+      return card;
+    }
+
+    function buildOverlayUi() {
+      const appShell = document.createElement("div");
+      appShell.id = "appShell";
+
+      const stage = document.createElement("div");
+      stage.id = "stage";
+      stage.appendChild(legacyViewer);
+
+      const navRail = document.createElement("nav");
+      navRail.id = "navRail";
+      navRail.setAttribute("aria-label", "viewer controls");
+
+      const menuToggleBtn = document.createElement("button");
+      menuToggleBtn.id = "menuToggle";
+      menuToggleBtn.className = "navButton";
+      menuToggleBtn.type = "button";
+      menuToggleBtn.setAttribute("aria-expanded", "false");
+      menuToggleBtn.setAttribute("aria-label", "toggle menu");
+      menuToggleBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">menu</span><span class="navLabel">Menu</span>';
+      navRail.appendChild(menuToggleBtn);
+
+      const overlayButtons = new Map();
+      for (const [name, meta] of Object.entries(overlayMeta)) {
+        const btn = document.createElement("button");
+        btn.className = "navButton";
+        btn.type = "button";
+        btn.dataset.overlay = name;
+        btn.setAttribute("aria-label", meta.title.toLowerCase());
+        btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${meta.icon}</span><span class="navLabel">${meta.title}</span>`;
+        navRail.appendChild(btn);
+        overlayButtons.set(name, btn);
+      }
+      const navSpacer = document.createElement("div");
+      navSpacer.className = "navSpacer";
+      navRail.appendChild(navSpacer);
+
+      const overlayBackdrop = document.createElement("div");
+      overlayBackdrop.id = "overlayBackdrop";
+      overlayBackdrop.hidden = true;
+
+      const overlayPanel = document.createElement("aside");
+      overlayPanel.id = "overlayPanel";
+      overlayPanel.setAttribute("aria-live", "polite");
+      overlayPanel.setAttribute("aria-hidden", "true");
+
+      const overlayHeader = document.createElement("div");
+      overlayHeader.className = "overlayHeader";
+      const overlayTitleWrap = document.createElement("div");
+      overlayTitleWrap.className = "overlayTitleWrap";
+      const overlayIcon = document.createElement("span");
+      overlayIcon.id = "overlayIcon";
+      overlayIcon.className = "material-symbols-rounded";
+      overlayIcon.setAttribute("aria-hidden", "true");
+      const overlayTextWrap = document.createElement("div");
+      const overlayTitle = document.createElement("div");
+      overlayTitle.id = "overlayTitle";
+      const overlaySubtitle = document.createElement("div");
+      overlaySubtitle.id = "overlaySubtitle";
+      overlayTextWrap.appendChild(overlayTitle);
+      overlayTextWrap.appendChild(overlaySubtitle);
+      overlayTitleWrap.appendChild(overlayIcon);
+      overlayTitleWrap.appendChild(overlayTextWrap);
+      const overlayCloseBtn = document.createElement("button");
+      overlayCloseBtn.id = "overlayClose";
+      overlayCloseBtn.className = "overlayCloseBtn";
+      overlayCloseBtn.type = "button";
+      overlayCloseBtn.setAttribute("aria-label", "close panel");
+      overlayCloseBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">close</span>';
+      overlayHeader.appendChild(overlayTitleWrap);
+      overlayHeader.appendChild(overlayCloseBtn);
+
+      const overlayBody = document.createElement("div");
+      overlayBody.className = "overlayBody";
+      const sections = new Map();
+      const makeSection = (name) => {
+        const section = document.createElement("section");
+        section.id = `${name}Overlay`;
+        section.className = "overlaySection";
+        const stack = document.createElement("div");
+        stack.className = "overlayStack";
+        section.appendChild(stack);
+        sections.set(name, section);
+        overlayBody.appendChild(section);
+        return stack;
+      };
+
+      const modelsStack = makeSection("models");
+      const modelSourceGrid = document.createElement("div");
+      modelSourceGrid.className = "controlGrid";
+      modelLabel.setAttribute("for", "modelCombo");
+      appendChildren(modelSourceGrid, [modelLabel, modelComboBox, modelOptionsPopup, modelFileInput]);
+      modelsStack.appendChild(createOverlayCard("Source", [modelSourceGrid]));
+      const modelActionRow = document.createElement("div");
+      modelActionRow.className = "buttonRow";
+      appendChildren(modelActionRow, [refreshModelsBtn, startBtn, stopBtn]);
+      modelsStack.appendChild(createOverlayCard("Actions", [modelActionRow]));
+
+      makeSection("params");
+      const paramsSection = sections.get("params");
+      paramsSection.classList.add("overlaySectionPlain");
+      paramsSection.innerHTML = "";
+      paramsSection.appendChild(paramPanel);
+
+      const trackingStack = makeSection("tracking");
+      const trackingActionRow = document.createElement("div");
+      trackingActionRow.className = "trackingSwitchRow";
+      const trackingSwitchLabel = document.createElement("label");
+      trackingSwitchLabel.className = "switchField";
+      trackingSwitchInput = document.createElement("input");
+      trackingSwitchInput.type = "checkbox";
+      const trackingSwitchTrack = document.createElement("span");
+      trackingSwitchTrack.className = "switchTrack";
+      const trackingSwitchText = document.createElement("span");
+      trackingSwitchText.className = "switchText";
+      trackingSwitchText.textContent = "Tracking";
+      trackingSwitchLabel.appendChild(trackingSwitchInput);
+      trackingSwitchLabel.appendChild(trackingSwitchTrack);
+      trackingSwitchLabel.appendChild(trackingSwitchText);
+      trackingModeEl = document.createElement("div");
+      trackingModeEl.className = "metaLine";
+      trackingModeEl.textContent = "Mode: off";
+      trackingActionRow.appendChild(trackingSwitchLabel);
+      trackingActionRow.appendChild(trackingModeEl);
+      trackingToggleBtn.classList.add("trackingHiddenButton");
+      trackingStatusEl.classList.add("statusLine");
+      const trackingFlipLabel = document.createElement("label");
+      trackingFlipLabel.className = "switchField";
+      const trackingFlipTrack = document.createElement("span");
+      trackingFlipTrack.className = "switchTrack";
+      const trackingFlipText = document.createElement("span");
+      trackingFlipText.className = "switchText";
+      trackingFlipText.textContent = "Flip horizontal";
+      trackingFlipLabel.appendChild(trackingInvertHorizontalInput);
+      trackingFlipLabel.appendChild(trackingFlipTrack);
+      trackingFlipLabel.appendChild(trackingFlipText);
+      const trackingControlStack = document.createElement("div");
+      trackingControlStack.className = "trackingControlStack";
+      trackingControlStack.appendChild(trackingActionRow);
+      trackingControlStack.appendChild(trackingFlipLabel);
+      trackingControlStack.appendChild(trackingStatusEl);
+      trackingStack.appendChild(createOverlayCard("Tracking", [trackingControlStack, trackingToggleBtn]));
+
+      const viewStack = makeSection("view");
+      const scaleCardContent = document.createElement("div");
+      scaleCardContent.className = "controlGrid";
+      const scaleLabel = document.createElement("label");
+      scaleLabel.setAttribute("for", "scale");
+      scaleLabel.textContent = "Viewer scale";
+      appendChildren(scaleCardContent, [scaleLabel, scaleInput, scaleVal]);
+      viewStack.appendChild(createOverlayCard("Scale", [scaleCardContent]));
+      const bgCardContent = document.createElement("div");
+      bgCardContent.className = "controlGrid";
+      const bgLabel = document.createElement("label");
+      bgLabel.setAttribute("for", "bgColor");
+      bgLabel.textContent = "Background color";
+      appendChildren(bgCardContent, [bgLabel, bgColorInput]);
+      viewStack.appendChild(createOverlayCard("Background", [bgCardContent]));
+
+      overlayPanel.appendChild(overlayHeader);
+      overlayPanel.appendChild(overlayBody);
+
+      appShell.appendChild(stage);
+      appShell.appendChild(navRail);
+      appShell.appendChild(overlayBackdrop);
+      appShell.appendChild(overlayPanel);
+
+      document.body.insertBefore(appShell, trackingVideo);
+      document.body.classList.add("app-shell-mounted");
+
+      return {
+        menuToggleBtn,
+        overlayButtons,
+        overlayBackdrop,
+        overlayPanel,
+        overlayCloseBtn,
+        overlayIcon,
+        overlayTitle,
+        overlaySubtitle,
+        sections,
+      };
+    }
+
+    const overlayUi = buildOverlayUi();
+    const menuToggleBtn = overlayUi.menuToggleBtn;
+    const overlayButtons = overlayUi.overlayButtons;
+    const overlayBackdrop = overlayUi.overlayBackdrop;
+    const overlayPanel = overlayUi.overlayPanel;
+    const overlayCloseBtn = overlayUi.overlayCloseBtn;
+    const overlayIcon = overlayUi.overlayIcon;
+    const overlayTitle = overlayUi.overlayTitle;
+    const overlaySubtitle = overlayUi.overlaySubtitle;
+    const overlaySections = overlayUi.sections;
 
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
       });
+    }
+
+    function syncOverlayUi() {
+      const activeMeta = activeOverlay ? overlayMeta[activeOverlay] : null;
+      document.body.classList.toggle("nav-expanded", navExpanded);
+      document.body.classList.toggle("nav-overlay-open", !!activeOverlay);
+      document.body.dataset.activeOverlay = activeOverlay || "";
+      document.body.classList.remove("nav-faded");
+      menuToggleBtn.setAttribute("aria-expanded", navExpanded ? "true" : "false");
+      overlayBackdrop.hidden = !activeOverlay;
+      overlayPanel.setAttribute("aria-hidden", activeOverlay ? "false" : "true");
+      if (activeMeta) {
+        overlayIcon.textContent = activeMeta.icon;
+        overlayTitle.textContent = activeMeta.title;
+        overlaySubtitle.textContent = activeMeta.subtitle;
+      }
+      for (const [name, btn] of overlayButtons.entries()) {
+        btn.classList.toggle("is-active", name === activeOverlay);
+      }
+      for (const [name, section] of overlaySections.entries()) {
+        section.classList.toggle("is-active", name === activeOverlay);
+      }
+      if (activeOverlay === "models") {
+        renderModelOptions(modelCombo.value || "");
+      } else {
+        closeModelOptions();
+      }
+      scheduleNavFade();
+    }
+
+    function scheduleNavFade() {
+      if (navFadeTimer) {
+        clearTimeout(navFadeTimer);
+        navFadeTimer = 0;
+      }
+      if (navExpanded || activeOverlay) return;
+      navFadeTimer = window.setTimeout(() => {
+        if (!navExpanded && !activeOverlay) {
+          document.body.classList.add("nav-faded");
+        }
+      }, NAV_FADE_DELAY_MS);
+    }
+
+    function wakeNavigation() {
+      document.body.classList.remove("nav-faded");
+      scheduleNavFade();
+    }
+
+    function setNavExpanded(expanded) {
+      navExpanded = !!expanded;
+      syncOverlayUi();
+    }
+
+    function closeOverlay() {
+      if (!activeOverlay) {
+        wakeNavigation();
+        return;
+      }
+      activeOverlay = null;
+      syncOverlayUi();
+    }
+
+    function openOverlay(name) {
+      if (!overlayMeta[name]) return;
+      activeOverlay = name;
+      syncOverlayUi();
+    }
+
+    function toggleOverlay(name) {
+      if (activeOverlay === name) {
+        closeOverlay();
+        return;
+      }
+      openOverlay(name);
+    }
+
+    function refreshTrackingUi() {
+      if (trackingSwitchInput) {
+        trackingSwitchInput.checked = trackingEnabled;
+        trackingSwitchInput.disabled = !!trackingToggleBtn.disabled;
+      }
+      if (trackingModeEl) {
+        const mode = trackingController?.getActualDelegate?.() || "CPU";
+        trackingModeEl.textContent = trackingEnabled ? `Mode: ${mode}` : "Mode: off";
+      }
     }
 
     async function prepareWasmRuntime() {
@@ -651,16 +1289,18 @@
           flipX: true,
           invertHorizontal: !!trackingInvertHorizontalInput?.checked,
           workerVersion: WASM_TEST_VERSION,
+          onStateChange: () => {
+            refreshTrackingUi();
+          },
         });
       }
       trackingController.configure(params, bindingJsonText);
       if (trackingEnabled) {
         await trackingController.start();
-        trackingToggleBtn.textContent = "tracking off";
       } else {
         trackingController.stop();
-        trackingToggleBtn.textContent = "tracking";
       }
+      refreshTrackingUi();
     }
 
     async function fetchModelList() {
@@ -756,7 +1396,7 @@
     }
 
     function openModelOptions() {
-      positionModelOptionsPopup();
+      if (activeOverlay !== "models") openOverlay("models");
       modelOptionsPopup.hidden = false;
       modelComboToggle.setAttribute("aria-expanded", "true");
     }
@@ -829,19 +1469,15 @@
       meta.textContent = `models: ${visibleCount}/${modelEntries.length} + local/custom`;
       modelOptionsPopup.appendChild(meta);
       for (const n of nodes) modelOptionsPopup.appendChild(n);
-      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
+      if (!modelOptionsPopup.hidden && activeOverlay === "models") {
+        modelComboToggle.setAttribute("aria-expanded", "true");
+      }
     }
 
     function positionModelOptionsPopup() {
-      const r = modelComboBox.getBoundingClientRect();
-      const margin = 8;
-      const available = Math.max(120, window.innerWidth - margin * 2);
-      const popupMinWidth = Math.min(320, available);
-      const width = Math.min(available, Math.max(popupMinWidth, r.width));
-      const left = Math.max(margin, Math.min(r.left, window.innerWidth - margin - width));
-      modelOptionsPopup.style.left = `${left}px`;
-      modelOptionsPopup.style.top = `${Math.max(8, r.bottom + 2)}px`;
-      modelOptionsPopup.style.width = `${width}px`;
+      modelOptionsPopup.style.left = "";
+      modelOptionsPopup.style.top = "";
+      modelOptionsPopup.style.width = "";
     }
 
     function fillModelSelect(entries) {
@@ -1015,7 +1651,7 @@
       const glInit = initWebGLBackend(canvas, { debugLog: false });
       const backendCallbacks = glInit.backend.createUnityResourceCallbacks();
       const applyBackgroundColor = () => {
-        const hex = String(bgColorInput?.value || "#111111");
+        const hex = String(bgColorInput?.value || "#f4f7fb");
         const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
         if (!m) return;
         const rgb = parseInt(m[1], 16);
@@ -1446,6 +2082,7 @@
     }
 
     refreshModelsBtn.addEventListener("click", () => {
+      wakeNavigation();
       if (modelSourceMode === "local-file") {
         setModelSourceMode("remote-list");
       }
@@ -1475,19 +2112,20 @@
     }
 
     startBtn.addEventListener("click", () => {
+      wakeNavigation();
       launchSelectedModel({ forceReload: false });
     });
     trackingToggleBtn.addEventListener("click", async () => {
+      wakeNavigation();
       trackingEnabled = !trackingEnabled;
       trackingToggleBtn.disabled = true;
+      refreshTrackingUi();
       try {
         if (trackingController) {
           if (trackingEnabled) {
             await trackingController.start();
-            trackingToggleBtn.textContent = "tracking off";
           } else {
             trackingController.stop();
-            trackingToggleBtn.textContent = "tracking";
           }
         } else if (!runtimeControl) {
           trackingStatusEl.textContent = "load a model first";
@@ -1495,23 +2133,47 @@
         }
       } catch (e) {
         trackingEnabled = false;
-        trackingToggleBtn.textContent = "tracking";
         trackingStatusEl.textContent = `tracking error: ${String(e && e.message ? e.message : e)}`;
       } finally {
         trackingToggleBtn.disabled = false;
+        refreshTrackingUi();
       }
+    });
+    trackingSwitchInput?.addEventListener("change", () => {
+      if (trackingSwitchInput.checked === trackingEnabled) return;
+      trackingToggleBtn.click();
+    });
+    menuToggleBtn.addEventListener("click", () => {
+      wakeNavigation();
+      setNavExpanded(!navExpanded);
+    });
+    for (const [name, btn] of overlayButtons.entries()) {
+      btn.addEventListener("click", () => {
+        wakeNavigation();
+        toggleOverlay(name);
+      });
+    }
+    overlayCloseBtn.addEventListener("click", () => {
+      closeOverlay();
+    });
+    overlayBackdrop.addEventListener("pointerdown", () => {
+      closeOverlay();
     });
 
     trackingInvertHorizontalInput?.addEventListener("change", () => {
+      wakeNavigation();
       trackingController?.setTrackingOptions({
         invertHorizontal: !!trackingInvertHorizontalInput.checked,
       });
+      refreshTrackingUi();
     });
     modelCombo.addEventListener("focus", () => {
+      wakeNavigation();
       renderModelOptions("");
       openModelOptions();
     });
     modelComboToggle.addEventListener("click", () => {
+      wakeNavigation();
       if (!modelOptionsPopup.hidden) {
         closeModelOptions();
         return;
@@ -1521,21 +2183,42 @@
       modelCombo.focus();
     });
     document.addEventListener("pointerdown", (ev) => {
-      if (modelComboBox.contains(ev.target)) return;
+      const target = ev.target;
+      wakeNavigation();
+      if (target instanceof Node && (modelComboBox.contains(target) || modelOptionsPopup.contains(target))) return;
       closeModelOptions();
+      if (target instanceof Node && !overlayPanel.contains(target) && !menuToggleBtn.contains(target)) {
+        closeOverlay();
+      }
     });
-    window.addEventListener("resize", () => {
-      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
+    window.addEventListener("resize", wakeNavigation);
+    window.addEventListener("scroll", wakeNavigation, true);
+    document.addEventListener("keydown", (ev) => {
+      wakeNavigation();
+      if (ev.key === "Escape") {
+        if (!modelOptionsPopup.hidden) {
+          closeModelOptions();
+          return;
+        }
+        closeOverlay();
+      }
     });
-    window.addEventListener("scroll", () => {
-      if (!modelOptionsPopup.hidden) positionModelOptionsPopup();
-    }, true);
+    document.addEventListener("wheel", wakeNavigation, { passive: true });
+    document.addEventListener("pointermove", () => {
+      const now = performance.now();
+      if ((now - lastNavPointerMoveAt) < 180) return;
+      lastNavPointerMoveAt = now;
+      wakeNavigation();
+    }, { passive: true });
+    document.addEventListener("touchstart", wakeNavigation, { passive: true });
 
     modelCombo.addEventListener("change", () => {
+      wakeNavigation();
       if (!String(modelCombo.value || "").trim()) return;
       launchSelectedModel({ forceReload: true });
     });
     modelCombo.addEventListener("input", () => {
+      wakeNavigation();
       renderModelOptions(modelCombo.value || "");
       openModelOptions();
     });
@@ -1551,6 +2234,9 @@
       launchSelectedModel({ forceReload: true });
     });
 
+    syncOverlayUi();
+    refreshTrackingUi();
+    wakeNavigation();
     const initModelList = await refreshModelListUI();
     if (initModelList?.source === "manifest" && (initModelList.count | 0) >= 2) {
       launchSelectedModel({ forceReload: false });
