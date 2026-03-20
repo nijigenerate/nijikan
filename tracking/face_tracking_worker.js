@@ -155,6 +155,35 @@ function convertBlendshapes(faceBlendshapes) {
   return out;
 }
 
+function swapLeftRightName(name) {
+  const text = String(name || "");
+  if (!text) return text;
+  return text
+    .replace(/Left/g, "__TMP_LEFT__")
+    .replace(/Right/g, "Left")
+    .replace(/__TMP_LEFT__/g, "Right")
+    .replace(/left/g, "__tmp_left__")
+    .replace(/right/g, "left")
+    .replace(/__tmp_left__/g, "right");
+}
+
+function mirrorBlendshapes(blendshapes) {
+  const source = blendshapes && typeof blendshapes === "object" ? blendshapes : Object.create(null);
+  const mirrored = Object.create(null);
+  for (const [name, value] of Object.entries(source)) {
+    mirrored[swapLeftRightName(name)] = value;
+  }
+  const gazeRightX = Number(source.GazeRightX ?? 0);
+  const gazeRightY = Number(source.GazeRightY ?? 0);
+  const gazeLeftX = Number(source.GazeLeftX ?? 0);
+  const gazeLeftY = Number(source.GazeLeftY ?? 0);
+  mirrored.GazeRightX = -gazeLeftX;
+  mirrored.GazeRightY = gazeLeftY;
+  mirrored.GazeLeftX = -gazeRightX;
+  mirrored.GazeLeftY = gazeRightY;
+  return mirrored;
+}
+
 function buildTrackingFrame(result) {
   if (!result?.faceLandmarks?.length) {
     return { hasFocus: false, reason: "no-face", blendshapes: Object.create(null), bones: Object.create(null) };
@@ -166,16 +195,16 @@ function buildTrackingFrame(result) {
   const euler = rotationMatrixToEulerZxy(rotationMatrix);
   const rightGaze = getGazeRight(landmarks);
   const leftGaze = getGazeLeft(landmarks);
-  const blendshapes = convertBlendshapes(result.faceBlendshapes?.[0]);
-  if (state.config.invertHorizontal) {
-    euler.yaw = -euler.yaw;
-    rightGaze[0] = -rightGaze[0];
-    leftGaze[0] = -leftGaze[0];
-  }
+  let blendshapes = convertBlendshapes(result.faceBlendshapes?.[0]);
   blendshapes.GazeRightX = rightGaze[0];
   blendshapes.GazeRightY = rightGaze[1];
   blendshapes.GazeLeftX = leftGaze[0];
   blendshapes.GazeLeftY = leftGaze[1];
+  if (state.config.invertHorizontal) {
+    euler.yaw = -euler.yaw;
+    euler.roll = -euler.roll;
+    blendshapes = mirrorBlendshapes(blendshapes);
+  }
   const nose = landmarks[NOSE_TIP];
   return {
     hasFocus: true,

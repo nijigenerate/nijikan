@@ -362,10 +362,9 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, debugEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
+  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
     this.video = video;
     this.statusEl = statusEl;
-    this.debugEl = debugEl;
     this.log = log;
     this.flipX = !!flipX;
     this.invertHorizontal = !!invertHorizontal;
@@ -408,21 +407,6 @@ export class WebcamTrackingController {
 
   setStatus(text) {
     if (this.statusEl) this.statusEl.textContent = String(text || "");
-  }
-
-  setDebugText(text) {
-    if (this.debugEl) this.debugEl.textContent = String(text || "");
-  }
-
-  refreshDebugText() {
-    const lines = [
-      `input: ${this.latestFrame?.hasFocus ? "face" : "none"} reason=${this.debug.lastReason} frame=${this.debug.frameSeq}`,
-      `head: yaw=${this.debug.yaw.toFixed(1)} pitch=${this.debug.pitch.toFixed(1)} roll=${this.debug.roll.toFixed(1)} blendshapes=${this.debug.blendshapeCount}`,
-      `bindings: mode=${this.debug.bindingMode} total=${this.debug.bindingCount} sources=${this.debug.matchedSourceCount}/${this.debug.sourceCount} active=${this.debug.activeSourceCount} updates=${this.debug.updateCount}`,
-      `top: ${this.debug.topBlendshapes || "-"}`,
-      `missing: ${this.debug.unresolvedSources || "-"}`,
-    ];
-    this.setDebugText(lines.join("\n"));
   }
 
   collectTopBlendshapes(frame, limit = 5) {
@@ -498,7 +482,6 @@ export class WebcamTrackingController {
       this.debug.activeSourceCount = coverage.activeSourceCount;
       this.debug.unresolvedSources = coverage.unresolvedSources;
       this.setStatus(`tracking idle (${reason})`);
-      this.refreshDebugText();
       return;
     }
     const head = frame?.bones?.Head || null;
@@ -509,15 +492,12 @@ export class WebcamTrackingController {
     this.debug.pitch = Number(rotation.pitch || 0);
     this.debug.roll = Number(rotation.roll || 0);
     this.debug.topBlendshapes = this.collectTopBlendshapes(frame);
-    this.setStatus(
-      `tracking active face=${blendshapeCount} yaw=${this.debug.yaw.toFixed(1)} pitch=${this.debug.pitch.toFixed(1)} roll=${this.debug.roll.toFixed(1)}`,
-    );
+    this.setStatus(`tracking active face=${blendshapeCount}`);
     const coverage = this.collectBindingCoverage(frame);
     this.debug.sourceCount = coverage.sourceCount;
     this.debug.matchedSourceCount = coverage.matchedSourceCount;
     this.debug.activeSourceCount = coverage.activeSourceCount;
     this.debug.unresolvedSources = coverage.unresolvedSources;
-    this.refreshDebugText();
   }
 
   configure(params, bindingJsonText = "") {
@@ -535,7 +515,6 @@ export class WebcamTrackingController {
     this.debug.updateCount = 0;
     this.debug.unresolvedSources = "";
     this.setStatus(this.bindings.length > 0 ? `tracking ready (${this.bindings.length} bindings)` : "tracking ready (no bindings)");
-    this.refreshDebugText();
   }
 
   applyWorkerConfig() {
@@ -578,13 +557,11 @@ export class WebcamTrackingController {
       } else if (data.type === "tracking-error") {
         this.pendingBitmap = false;
         this.setStatus(`tracking error: ${data.error || "unknown"}`);
-        this.refreshDebugText();
       }
     };
     this.worker.onerror = (event) => {
       this.pendingBitmap = false;
       this.setStatus(`tracking error: ${String(event?.message || "worker failed to load")}`);
-      this.refreshDebugText();
     };
     this.applyWorkerConfig();
 
@@ -687,18 +664,15 @@ export class WebcamTrackingController {
     this.debug.ready = false;
     this.debug.updateCount = 0;
     this.setStatus("tracking stopped");
-    this.refreshDebugText();
   }
 
   update(dt) {
     if (!this.started || this.bindings.length === 0) {
       this.debug.updateCount = 0;
-      this.refreshDebugText();
       return [];
     }
     const updates = mergeUpdates(this.bindings.map((binding) => binding.update(this.latestFrame, dt)));
     this.debug.updateCount = updates.length;
-    this.refreshDebugText();
     return updates;
   }
 
