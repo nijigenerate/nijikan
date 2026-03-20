@@ -235,6 +235,20 @@
       overflow-wrap: anywhere;
       font-size: 12px;
     }
+    #trackingDebug {
+      margin: 0;
+      padding:
+        0
+        calc(env(safe-area-inset-right, 0px) + 8px)
+        6px
+        calc(env(safe-area-inset-left, 0px) + 8px);
+      color: #9ab49a;
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      flex: 0 0 auto;
+    }
     #trackingVideo {
       display: none !important;
     }
@@ -516,6 +530,10 @@
     <label for="bgColor">bg</label>
     <input id="bgColor" type="color" value="#111111" />
   </div>
+  <pre id="trackingDebug">input: none
+head: yaw=0.0 pitch=0.0 roll=0.0 blendshapes=0
+bindings: mode=none total=0 sources=0/0 active=0 updates=0
+top: -</pre>
   <div id="workspace">
     <div id="paramPanel"></div>
     <div id="viewer">
@@ -547,6 +565,7 @@
     const stopBtn = document.getElementById("stop");
     const trackingToggleBtn = document.getElementById("trackingToggle");
     const trackingStatusEl = document.getElementById("trackingStatus");
+    const trackingDebugEl = document.getElementById("trackingDebug");
     const trackingInvertHorizontalInput = document.getElementById("trackingInvertHorizontal");
     const trackingVideo = document.getElementById("trackingVideo");
     const scaleInput = document.getElementById("scale");
@@ -668,6 +687,7 @@
         trackingController = new WebcamTrackingController({
           video: trackingVideo,
           statusEl: trackingStatusEl,
+          debugEl: trackingDebugEl,
           log,
           flipX: true,
           invertHorizontal: !!trackingInvertHorizontalInput?.checked,

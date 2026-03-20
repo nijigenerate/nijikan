@@ -144,7 +144,10 @@ function getGazeLeft(landmarks) {
 
 function convertBlendshapes(faceBlendshapes) {
   const out = Object.create(null);
-  for (const item of Array.isArray(faceBlendshapes) ? faceBlendshapes : []) {
+  const categories = Array.isArray(faceBlendshapes?.categories)
+    ? faceBlendshapes.categories
+    : (Array.isArray(faceBlendshapes) ? faceBlendshapes : []);
+  for (const item of categories) {
     const name = String(item.categoryName || item.category_name || "");
     if (!name) continue;
     out[name] = Number(item.score) || 0;

@@ -36,6 +36,30 @@ const SOURCE_TYPE_NAME = new Map([
   ["keypress", SOURCE_TYPE.KeyPress],
 ]);
 
+const BLENDSHAPE_ALIASES = new Map([
+  ["eyeblinkleft", "eyeBlinkLeft"],
+  ["eyeblinkright", "eyeBlinkRight"],
+  ["eyeleftblink", "eyeBlinkLeft"],
+  ["eyerightblink", "eyeBlinkRight"],
+  ["mouthopen", "jawOpen"],
+  ["jawopen", "jawOpen"],
+  ["mouthsmileleft", "mouthSmileLeft"],
+  ["mouthsmileright", "mouthSmileRight"],
+  ["browinnerup", "browInnerUp"],
+  ["browouterupleft", "browOuterUpLeft"],
+  ["browouterupright", "browOuterUpRight"],
+  ["browdownleft", "browDownLeft"],
+  ["browdownright", "browDownRight"],
+  ["eyeleftsquint", "eyeSquintLeft"],
+  ["eyerightsquint", "eyeSquintRight"],
+  ["eyesquintleft", "eyeSquintLeft"],
+  ["eyesquintright", "eyeSquintRight"],
+  ["gazeleftx", "GazeLeftX"],
+  ["gazelefty", "GazeLeftY"],
+  ["gazerightx", "GazeRightX"],
+  ["gazerighty", "GazeRightY"],
+]);
+
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
@@ -124,12 +148,29 @@ function setAxisValue(param, axis, value) {
   else param.valueY = value;
 }
 
+function resolveBlendshapeName(frame, sourceName) {
+  if (!frame?.blendshapes || !sourceName) return "";
+  if (Object.prototype.hasOwnProperty.call(frame.blendshapes, sourceName)) return sourceName;
+  const normalized = normalizeName(sourceName);
+  const alias = BLENDSHAPE_ALIASES.get(normalized);
+  if (alias && Object.prototype.hasOwnProperty.call(frame.blendshapes, alias)) return alias;
+  for (const name of Object.keys(frame.blendshapes)) {
+    if (normalizeName(name) === normalized) return name;
+  }
+  return "";
+}
+
 function getBlendshape(frame, sourceName) {
-  return Number(frame?.blendshapes?.[sourceName] ?? 0);
+  const resolved = resolveBlendshapeName(frame, sourceName);
+  return Number(resolved ? frame?.blendshapes?.[resolved] : 0);
 }
 
 function getBone(frame, sourceName) {
   return frame?.bones?.[sourceName] || null;
+}
+
+function hasBlendshape(frame, sourceName) {
+  return !!resolveBlendshapeName(frame, sourceName);
 }
 
 class RatioBindingEvaluator {
@@ -321,9 +362,10 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
+  constructor({ video, statusEl = null, debugEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
     this.video = video;
     this.statusEl = statusEl;
+    this.debugEl = debugEl;
     this.log = log;
     this.flipX = !!flipX;
     this.invertHorizontal = !!invertHorizontal;
@@ -349,6 +391,14 @@ export class WebcamTrackingController {
       roll: 0,
       lastReason: "off",
       ready: false,
+      bindingMode: "none",
+      bindingCount: 0,
+      sourceCount: 0,
+      matchedSourceCount: 0,
+      activeSourceCount: 0,
+      updateCount: 0,
+      topBlendshapes: "",
+      unresolvedSources: "",
     };
   }
 
@@ -356,11 +406,95 @@ export class WebcamTrackingController {
     if (this.statusEl) this.statusEl.textContent = String(text || "");
   }
 
+  setDebugText(text) {
+    if (this.debugEl) this.debugEl.textContent = String(text || "");
+  }
+
+  refreshDebugText() {
+    const lines = [
+      `input: ${this.latestFrame?.hasFocus ? "face" : "none"} reason=${this.debug.lastReason} frame=${this.debug.frameSeq}`,
+      `head: yaw=${this.debug.yaw.toFixed(1)} pitch=${this.debug.pitch.toFixed(1)} roll=${this.debug.roll.toFixed(1)} blendshapes=${this.debug.blendshapeCount}`,
+      `bindings: mode=${this.debug.bindingMode} total=${this.debug.bindingCount} sources=${this.debug.matchedSourceCount}/${this.debug.sourceCount} active=${this.debug.activeSourceCount} updates=${this.debug.updateCount}`,
+      `top: ${this.debug.topBlendshapes || "-"}`,
+      `missing: ${this.debug.unresolvedSources || "-"}`,
+    ];
+    this.setDebugText(lines.join("\n"));
+  }
+
+  collectTopBlendshapes(frame, limit = 5) {
+    const entries = Object.entries(frame?.blendshapes || {})
+      .filter(([, value]) => Number.isFinite(value) && Math.abs(value) > 0.01)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .slice(0, limit);
+    return entries.map(([name, value]) => `${name}=${Number(value).toFixed(2)}`).join(", ");
+  }
+
+  collectBindingCoverage(frame) {
+    const sources = new Map();
+    for (const binding of this.bindings) {
+      const evaluator = binding?.evaluator;
+      if (!evaluator?.sourceName) continue;
+      const key = `${evaluator.sourceType}:${evaluator.sourceName}`;
+      if (sources.has(key)) continue;
+      let matched = false;
+      let active = false;
+      switch (evaluator.sourceType) {
+        case SOURCE_TYPE.Blendshape: {
+          matched = hasBlendshape(frame, evaluator.sourceName);
+          if (matched) active = Math.abs(getBlendshape(frame, evaluator.sourceName)) > 0.01;
+          break;
+        }
+        case SOURCE_TYPE.BonePosX:
+        case SOURCE_TYPE.BonePosY:
+        case SOURCE_TYPE.BonePosZ:
+        case SOURCE_TYPE.BoneRotRoll:
+        case SOURCE_TYPE.BoneRotPitch:
+        case SOURCE_TYPE.BoneRotYaw: {
+          const bone = getBone(frame, evaluator.sourceName);
+          matched = !!bone;
+          if (matched) active = Math.abs(evaluator.readSource(frame)) > 0.01;
+          break;
+        }
+        default:
+          break;
+      }
+      sources.set(key, { matched, active });
+    }
+    let matchedSourceCount = 0;
+    let activeSourceCount = 0;
+    const unresolved = [];
+    for (const info of sources.values()) {
+      if (info.matched) matchedSourceCount += 1;
+      if (info.active) activeSourceCount += 1;
+    }
+    for (const [key, info] of sources.entries()) {
+      if (info.matched) continue;
+      unresolved.push(key.split(":").slice(1).join(":"));
+    }
+    return {
+      sourceCount: sources.size,
+      matchedSourceCount,
+      activeSourceCount,
+      unresolvedSources: unresolved.slice(0, 8).join(", "),
+    };
+  }
+
   updateStatusFromFrame(frame) {
     const reason = frame?.reason || "unknown";
     this.debug.lastReason = reason;
     if (!frame?.hasFocus) {
+      this.debug.blendshapeCount = 0;
+      this.debug.yaw = 0;
+      this.debug.pitch = 0;
+      this.debug.roll = 0;
+      this.debug.topBlendshapes = "";
+      const coverage = this.collectBindingCoverage(frame);
+      this.debug.sourceCount = coverage.sourceCount;
+      this.debug.matchedSourceCount = coverage.matchedSourceCount;
+      this.debug.activeSourceCount = coverage.activeSourceCount;
+      this.debug.unresolvedSources = coverage.unresolvedSources;
       this.setStatus(`tracking idle (${reason})`);
+      this.refreshDebugText();
       return;
     }
     const head = frame?.bones?.Head || null;
@@ -370,18 +504,34 @@ export class WebcamTrackingController {
     this.debug.yaw = Number(rotation.yaw || 0);
     this.debug.pitch = Number(rotation.pitch || 0);
     this.debug.roll = Number(rotation.roll || 0);
+    this.debug.topBlendshapes = this.collectTopBlendshapes(frame);
     this.setStatus(
       `tracking active face=${blendshapeCount} yaw=${this.debug.yaw.toFixed(1)} pitch=${this.debug.pitch.toFixed(1)} roll=${this.debug.roll.toFixed(1)}`,
     );
+    const coverage = this.collectBindingCoverage(frame);
+    this.debug.sourceCount = coverage.sourceCount;
+    this.debug.matchedSourceCount = coverage.matchedSourceCount;
+    this.debug.activeSourceCount = coverage.activeSourceCount;
+    this.debug.unresolvedSources = coverage.unresolvedSources;
+    this.refreshDebugText();
   }
 
   configure(params, bindingJsonText = "") {
     this.params = params.map(makeParamMeta);
     this.bindings = parseBindingSpecArray(bindingJsonText, this.params);
+    this.debug.bindingMode = "ext";
     if (this.bindings.length === 0) {
       this.bindings = createFallbackBindings(this.params);
+      this.debug.bindingMode = "fallback";
     }
+    this.debug.bindingCount = this.bindings.length;
+    this.debug.sourceCount = 0;
+    this.debug.matchedSourceCount = 0;
+    this.debug.activeSourceCount = 0;
+    this.debug.updateCount = 0;
+    this.debug.unresolvedSources = "";
     this.setStatus(this.bindings.length > 0 ? `tracking ready (${this.bindings.length} bindings)` : "tracking ready (no bindings)");
+    this.refreshDebugText();
   }
 
   applyWorkerConfig() {
@@ -424,11 +574,13 @@ export class WebcamTrackingController {
       } else if (data.type === "tracking-error") {
         this.pendingBitmap = false;
         this.setStatus(`tracking error: ${data.error || "unknown"}`);
+        this.refreshDebugText();
       }
     };
     this.worker.onerror = (event) => {
       this.pendingBitmap = false;
       this.setStatus(`tracking error: ${String(event?.message || "worker failed to load")}`);
+      this.refreshDebugText();
     };
     this.applyWorkerConfig();
 
@@ -513,11 +665,20 @@ export class WebcamTrackingController {
     this.latestFrame = null;
     this.debug.lastReason = "stopped";
     this.debug.ready = false;
+    this.debug.updateCount = 0;
     this.setStatus("tracking stopped");
+    this.refreshDebugText();
   }
 
   update(dt) {
-    if (!this.started || this.bindings.length === 0) return [];
-    return mergeUpdates(this.bindings.map((binding) => binding.update(this.latestFrame, dt)));
+    if (!this.started || this.bindings.length === 0) {
+      this.debug.updateCount = 0;
+      this.refreshDebugText();
+      return [];
+    }
+    const updates = mergeUpdates(this.bindings.map((binding) => binding.update(this.latestFrame, dt)));
+    this.debug.updateCount = updates.length;
+    this.refreshDebugText();
+    return updates;
   }
 }
