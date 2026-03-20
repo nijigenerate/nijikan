@@ -403,6 +403,7 @@ export class WebcamTrackingController {
       topBlendshapes: "",
       unresolvedSources: "",
     };
+    this.appBasePath = new URL("../", import.meta.url).pathname;
   }
 
   setStatus(text) {
@@ -492,7 +493,7 @@ export class WebcamTrackingController {
     this.debug.pitch = Number(rotation.pitch || 0);
     this.debug.roll = Number(rotation.roll || 0);
     this.debug.topBlendshapes = this.collectTopBlendshapes(frame);
-    this.setStatus(`tracking active face=${blendshapeCount}`);
+    this.setStatus("tracking active");
     const coverage = this.collectBindingCoverage(frame);
     this.debug.sourceCount = coverage.sourceCount;
     this.debug.matchedSourceCount = coverage.matchedSourceCount;
@@ -524,8 +525,8 @@ export class WebcamTrackingController {
       config: {
         flipX: this.flipX,
         invertHorizontal: this.invertHorizontal,
-        wasmPath: "/vendor/package/wasm",
-        modelAssetPath: "/tracking/face_landmarker_v2_with_blendshapes.task",
+        wasmPath: `${this.appBasePath}vendor/package/wasm`,
+        modelAssetPath: `${this.appBasePath}tracking/face_landmarker_v2_with_blendshapes.task`,
       },
     });
   }

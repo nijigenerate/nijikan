@@ -11,6 +11,11 @@ mimetypes.add_type("application/javascript", ".mjs")
 mimetypes.add_type("application/javascript", ".cjs")
 mimetypes.add_type("application/wasm", ".wasm")
 
+APP_PREFIX = "/nijikan"
+MODELS_PREFIX = f"{APP_PREFIX}/models/"
+MODEL_LIST_PATH = f"{APP_PREFIX}/models/__list"
+MANIFEST_JSON_PATH = f"{APP_PREFIX}/manifest.json"
+
 
 class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
@@ -27,22 +32,69 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_HEAD(self):
-        if self.path.startswith("/models/__list"):
+        if self.path in ("", "/", APP_PREFIX):
+            self.send_response(302)
+            self.send_header("Location", f"{APP_PREFIX}/index.html")
+            self.end_headers()
+            return
+        if self.path.startswith(MANIFEST_JSON_PATH):
+            self.serve_manifest_json(head_only=True)
+            return
+        if self.path.startswith(MODEL_LIST_PATH):
             self.serve_model_list(head_only=True)
             return
-        if self.path.startswith("/models/"):
+        if self.path.startswith(MODELS_PREFIX):
             self.serve_model(head_only=True)
+            return
+        if not self.rewrite_app_path():
+            self.send_error(404, "not found")
             return
         return super().do_HEAD()
 
     def do_GET(self):
-        if self.path.startswith("/models/__list"):
+        if self.path in ("", "/", APP_PREFIX):
+            self.send_response(302)
+            self.send_header("Location", f"{APP_PREFIX}/index.html")
+            self.end_headers()
+            return
+        if self.path.startswith(MANIFEST_JSON_PATH):
+            self.serve_manifest_json(head_only=False)
+            return
+        if self.path.startswith(MODEL_LIST_PATH):
             self.serve_model_list(head_only=False)
             return
-        if self.path.startswith("/models/"):
+        if self.path.startswith(MODELS_PREFIX):
             self.serve_model(head_only=False)
             return
+        if not self.rewrite_app_path():
+            self.send_error(404, "not found")
+            return
         return super().do_GET()
+
+    def rewrite_app_path(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        if not parsed.path.startswith(f"{APP_PREFIX}/"):
+            return False
+        rewritten_path = parsed.path[len(APP_PREFIX):] or "/"
+        if parsed.query:
+            rewritten_path = f"{rewritten_path}?{parsed.query}"
+        self.path = rewritten_path
+        return True
+
+    def serve_manifest_json(self, head_only: bool):
+        app_manifest = pathlib.Path(self.directory) / "manifest.json"
+        if app_manifest.is_file():
+            self.rewrite_app_path()
+            if head_only:
+                return super().do_HEAD()
+            return super().do_GET()
+        payload = b'{"models":[]}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(payload)
 
     def serve_model_list(self, head_only: bool):
         root = self.models_root
@@ -57,7 +109,7 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
             if suf not in (".inx", ".inp"):
                 continue
             rel = p.relative_to(root).as_posix()
-            models.append(f"/models/{rel}")
+            models.append(f"{MODELS_PREFIX}{rel}")
         models.sort()
         payload = json.dumps({"models": models}, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
@@ -73,7 +125,7 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(500, "models root is not configured")
             return
         parsed = urllib.parse.urlsplit(self.path)
-        rel = urllib.parse.unquote(parsed.path[len("/models/"):])
+        rel = urllib.parse.unquote(parsed.path[len(MODELS_PREFIX):])
         rel_path = pathlib.PurePosixPath(rel)
         if rel_path.is_absolute() or ".." in rel_path.parts:
             self.send_error(400, "invalid model path")
@@ -105,8 +157,8 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Serve nijikan wasm app and mount a models directory to /models")
-    parser.add_argument("--models-dir", required=True, help="Directory mounted as /models")
+    parser = argparse.ArgumentParser(description="Serve nijikan app at /nijikan and mount models at /nijikan/models")
+    parser.add_argument("--models-dir", required=True, help="Directory mounted as /nijikan/models")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on")
     args = parser.parse_args()
 
@@ -122,8 +174,8 @@ def main():
 
     with ReusableTCPServer(("127.0.0.1", args.port), lambda *a, **k: handler(*a, directory=str(app_root), **k)) as httpd:
         print(f"serving nijikan root: {app_root}")
-        print(f"models mapping: /models/* -> {models_root}")
-        print(f"open: http://127.0.0.1:{args.port}/index.html")
+        print(f"models mapping: {MODELS_PREFIX}* -> {models_root}")
+        print(f"open: http://127.0.0.1:{args.port}{APP_PREFIX}/index.html")
         try:
             httpd.serve_forever(poll_interval=0.2)
         except KeyboardInterrupt:

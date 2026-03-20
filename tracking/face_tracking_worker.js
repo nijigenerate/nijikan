@@ -1,7 +1,16 @@
+function getAppBasePath() {
+  const pathname = String(self.location?.pathname || "/");
+  const suffix = "/tracking/face_tracking_worker.js";
+  if (pathname.endsWith(suffix)) return pathname.slice(0, -suffix.length + 1);
+  return "/nijikan/";
+}
+
+const APP_BASE_PATH = getAppBasePath();
+
 if (!self.__mediapipeTasksVision) {
   self.exports = self.exports || {};
   self.module = self.module || { exports: self.exports };
-  importScripts("/vendor/package/vision_bundle.cjs");
+  importScripts(`${APP_BASE_PATH}vendor/package/vision_bundle.cjs`);
   self.__mediapipeTasksVision = self.module?.exports || self.exports;
 }
 
@@ -27,8 +36,8 @@ const state = {
   ctx: null,
   config: {
     runningMode: "VIDEO",
-    wasmPath: "/vendor/package/wasm",
-    modelAssetPath: "/tracking/face_landmarker_v2_with_blendshapes.task",
+    wasmPath: `${APP_BASE_PATH}vendor/package/wasm`,
+    modelAssetPath: `${APP_BASE_PATH}tracking/face_landmarker_v2_with_blendshapes.task`,
     numFaces: 1,
     flipX: true,
     invertHorizontal: false,

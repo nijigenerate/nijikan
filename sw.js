@@ -1,24 +1,26 @@
-const CACHE_NAME = "nijikan-static-v4";
+const CACHE_NAME = "nijikan-static-v5";
+const APP_BASE_PATH = new URL("./", self.registration.scope).pathname;
+const withBase = (path) => new URL(path, self.registration.scope).pathname;
 const PRECACHE_URLS = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/sw.js",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/webgl_backend/webgl_backend.js",
-  "/wasm/nicxlive.js",
-  "/wasm/nicxlive.wasm",
-  "/tracking/tracking_runtime.js",
-  "/tracking/face_tracking_worker.js",
-  "/tracking/face_landmarker_v2_with_blendshapes.task",
-  "/vendor/package/vision_bundle.cjs",
-  "/vendor/package/wasm/vision_wasm_internal.js",
-  "/vendor/package/wasm/vision_wasm_internal.wasm",
-  "/vendor/package/wasm/vision_wasm_module_internal.js",
-  "/vendor/package/wasm/vision_wasm_module_internal.wasm",
-  "/vendor/package/wasm/vision_wasm_nosimd_internal.js",
-  "/vendor/package/wasm/vision_wasm_nosimd_internal.wasm",
+  withBase("./"),
+  withBase("./index.html"),
+  withBase("./manifest.webmanifest"),
+  withBase("./sw.js"),
+  withBase("./icons/icon-192.png"),
+  withBase("./icons/icon-512.png"),
+  withBase("./webgl_backend/webgl_backend.js"),
+  withBase("./wasm/nicxlive.js"),
+  withBase("./wasm/nicxlive.wasm"),
+  withBase("./tracking/tracking_runtime.js"),
+  withBase("./tracking/face_tracking_worker.js"),
+  withBase("./tracking/face_landmarker_v2_with_blendshapes.task"),
+  withBase("./vendor/package/vision_bundle.cjs"),
+  withBase("./vendor/package/wasm/vision_wasm_internal.js"),
+  withBase("./vendor/package/wasm/vision_wasm_internal.wasm"),
+  withBase("./vendor/package/wasm/vision_wasm_module_internal.js"),
+  withBase("./vendor/package/wasm/vision_wasm_module_internal.wasm"),
+  withBase("./vendor/package/wasm/vision_wasm_nosimd_internal.js"),
+  withBase("./vendor/package/wasm/vision_wasm_nosimd_internal.wasm"),
 ];
 
 function isLocalDev() {
@@ -52,10 +54,11 @@ self.addEventListener("activate", (event) => {
 });
 
 function isStaticAssetPath(pathname) {
-  if (pathname === "/" || pathname === "/index.html") return true;
-  if (pathname === "/webgl_backend/webgl_backend.js") return true;
-  if (pathname === "/wasm/nicxlive.js" || pathname === "/wasm/nicxlive.wasm") return true;
-  if (pathname.startsWith("/icons/")) return true;
+  if (!pathname.startsWith(APP_BASE_PATH)) return false;
+  if (pathname === APP_BASE_PATH || pathname === withBase("./index.html")) return true;
+  if (pathname === withBase("./webgl_backend/webgl_backend.js")) return true;
+  if (pathname === withBase("./wasm/nicxlive.js") || pathname === withBase("./wasm/nicxlive.wasm")) return true;
+  if (pathname.startsWith(withBase("./icons/"))) return true;
   if (pathname.endsWith(".js") || pathname.endsWith(".mjs") || pathname.endsWith(".wasm") || pathname.endsWith(".css")) return true;
   if (pathname.endsWith(".webmanifest")) return true;
   return false;
@@ -73,10 +76,10 @@ self.addEventListener("fetch", (event) => {
       try {
         const net = await fetch(req);
         const cache = await caches.open(CACHE_NAME);
-        cache.put("/index.html", net.clone()).catch(() => {});
+        cache.put(withBase("./index.html"), net.clone()).catch(() => {});
         return net;
       } catch (_) {
-        const cached = await caches.match("/index.html", { ignoreSearch: true });
+        const cached = await caches.match(withBase("./index.html"), { ignoreSearch: true });
         if (cached) return cached;
         throw _;
       }
