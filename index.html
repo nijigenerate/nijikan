@@ -30,6 +30,7 @@
       --params-overlay-width: clamp(72px, 22vw, 360px);
       --outer-gap: 18px;
       --nav-gap: 18px;
+      --nav-rail-bottom: 280px;
     }
     html, body {
       margin: 0;
@@ -722,8 +723,39 @@
     @media (max-width: 860px) {
       :root {
         --overlay-width: calc(100vw - 36px);
-        --params-overlay-width: clamp(72px, 28vw, 280px);
+        --params-overlay-width: clamp(72px, 24vw, 220px);
         --outer-gap: 12px;
+      }
+      #navRail {
+        bottom: auto;
+        width: auto;
+        max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2));
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+      }
+      body.nav-expanded #navRail {
+        width: auto;
+      }
+      .navSpacer {
+        display: none;
+      }
+      .navButton {
+        width: 44px;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0 10px;
+        justify-content: center;
+        gap: 0;
+      }
+      .navLabel {
+        display: none;
+      }
+      body.nav-expanded .navLabel {
+        display: none;
+        opacity: 0;
+        transform: translateX(-8px);
       }
       #overlayPanel {
         left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 50px);
@@ -734,28 +766,23 @@
       body.nav-expanded #overlayPanel {
         left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 50px);
       }
-      #navRail {
-        bottom: auto;
-      }
       body[data-active-overlay="params"] #overlayPanel {
-        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 58px);
+        top: calc(var(--nav-rail-bottom) + 10px);
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap));
         right: auto;
+        width: min(var(--params-overlay-width), calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2)));
+        max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2));
+        height: auto;
+        max-height: none;
       }
       body.nav-expanded[data-active-overlay="params"] #overlayPanel {
-        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap) + 58px);
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap));
       }
     }
     @media (max-width: 560px) {
-      #navRail {
-        width: 54px;
-        padding: 8px;
-      }
-      body.nav-expanded #navRail {
-        width: min(82vw, 240px);
-      }
       .navButton {
         min-height: 42px;
-        gap: 12px;
         padding: 0 10px;
       }
       #overlayPanel {
@@ -772,13 +799,21 @@
         transform: translate(0, 0);
       }
       body[data-active-overlay="params"] #overlayPanel {
-        top: auto;
-        left: calc(env(safe-area-inset-left, 0px) + 72px);
-        right: 10px;
-        width: auto;
-        max-width: none;
-        height: min(72vh, 560px);
+        top: calc(var(--nav-rail-bottom) + 10px);
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+        left: calc(env(safe-area-inset-left, 0px) + 10px);
+        right: auto;
+        width: min(var(--params-overlay-width), calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 20px));
+        max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 20px);
+        height: auto;
         transform: translate(0, 12px);
+      }
+    }
+    @media (max-height: 760px) {
+      body[data-active-overlay="params"] #overlayPanel {
+        left: calc(env(safe-area-inset-left, 0px) + var(--outer-gap));
+        width: min(var(--params-overlay-width), calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2)));
+        max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - (var(--outer-gap) * 2));
       }
     }
   </style>
@@ -889,7 +924,7 @@
       params: {
         icon: "tune",
         title: "Parameters",
-        subtitle: "Edit puppet parameters on demand.",
+        subtitle: "",
       },
       tracking: {
         icon: "center_focus_strong",
@@ -1145,6 +1180,7 @@
       } else {
         closeModelOptions();
       }
+      updateLayoutMetrics();
       scheduleNavFade();
     }
 
@@ -1163,6 +1199,7 @@
 
     function wakeNavigation() {
       document.body.classList.remove("nav-faded");
+      updateLayoutMetrics();
       scheduleNavFade();
     }
 
@@ -1203,6 +1240,20 @@
         const mode = trackingController?.getActualDelegate?.() || "CPU";
         trackingModeEl.textContent = trackingEnabled ? `Mode: ${mode}` : "Mode: off";
       }
+    }
+
+    function isCompactHorizontalNav() {
+      return window.matchMedia("(max-height: 760px), (max-width: 860px)").matches;
+    }
+
+    function updateLayoutMetrics() {
+      if (isCompactHorizontalNav() && navExpanded) {
+        navExpanded = false;
+      }
+      const navRail = document.getElementById("navRail");
+      if (!navRail) return;
+      const rect = navRail.getBoundingClientRect();
+      document.documentElement.style.setProperty("--nav-rail-bottom", `${Math.round(rect.bottom)}px`);
     }
 
     async function prepareWasmRuntime() {
@@ -2145,6 +2196,7 @@
     });
     menuToggleBtn.addEventListener("click", () => {
       wakeNavigation();
+      if (isCompactHorizontalNav()) return;
       setNavExpanded(!navExpanded);
     });
     for (const [name, btn] of overlayButtons.entries()) {
@@ -2191,8 +2243,14 @@
         closeOverlay();
       }
     });
-    window.addEventListener("resize", wakeNavigation);
-    window.addEventListener("scroll", wakeNavigation, true);
+    window.addEventListener("resize", () => {
+      updateLayoutMetrics();
+      wakeNavigation();
+    });
+    window.addEventListener("scroll", () => {
+      updateLayoutMetrics();
+      wakeNavigation();
+    }, true);
     document.addEventListener("keydown", (ev) => {
       wakeNavigation();
       if (ev.key === "Escape") {
@@ -2234,6 +2292,7 @@
       launchSelectedModel({ forceReload: true });
     });
 
+    updateLayoutMetrics();
     syncOverlayUi();
     refreshTrackingUi();
     wakeNavigation();
