@@ -7,14 +7,25 @@ function getAppBasePath() {
 
 const APP_BASE_PATH = getAppBasePath();
 
-if (!self.__mediapipeTasksVision) {
+async function ensureTasksVisionLoaded() {
+  if (self.__mediapipeTasksVision) return self.__mediapipeTasksVision;
   self.exports = self.exports || {};
   self.module = self.module || { exports: self.exports };
-  importScripts(`${APP_BASE_PATH}vendor/package/vision_bundle.cjs`);
+  const bundleUrl = `${APP_BASE_PATH}vendor/package/vision_bundle.cjs`;
+  const response = await fetch(bundleUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`failed to fetch tasks vision bundle: ${response.status}`);
+  }
+  const source = await response.text();
+  const blobUrl = URL.createObjectURL(new Blob([source], { type: "application/javascript" }));
+  try {
+    importScripts(blobUrl);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
   self.__mediapipeTasksVision = self.module?.exports || self.exports;
+  return self.__mediapipeTasksVision;
 }
-
-const { FaceLandmarker, FilesetResolver } = self.__mediapipeTasksVision;
 
 const LEFT_EYE_OUTER = 33;
 const RIGHT_EYE_OUTER = 263;
@@ -231,6 +242,7 @@ function buildTrackingFrame(result) {
 
 async function ensureFaceLandmarker() {
   if (state.faceLandmarker) return state.faceLandmarker;
+  const { FaceLandmarker, FilesetResolver } = await ensureTasksVisionLoaded();
   const vision = await FilesetResolver.forVisionTasks(state.config.wasmPath);
   state.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: state.config.modelAssetPath },

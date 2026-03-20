@@ -362,12 +362,13 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
+  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false, workerVersion = "" } = {}) {
     this.video = video;
     this.statusEl = statusEl;
     this.log = log;
     this.flipX = !!flipX;
     this.invertHorizontal = !!invertHorizontal;
+    this.workerVersion = String(workerVersion || "");
     this.params = [];
     this.bindings = [];
     this.worker = null;
@@ -541,7 +542,9 @@ export class WebcamTrackingController {
   async start() {
     if (this.started) return;
     if (!this.video) throw new Error("tracking video element is missing");
-    this.worker = new Worker(new URL("./face_tracking_worker.js", import.meta.url));
+    const workerUrl = new URL("./face_tracking_worker.js", import.meta.url);
+    if (this.workerVersion) workerUrl.searchParams.set("v", this.workerVersion);
+    this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event) => {
       const data = event?.data || {};
       if (data.type === "tracking-ready") {
