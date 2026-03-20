@@ -31,6 +31,7 @@ const state = {
     modelAssetPath: "/tracking/face_landmarker_v2_with_blendshapes.task",
     numFaces: 1,
     flipX: true,
+    invertHorizontal: false,
   },
 };
 
@@ -141,10 +142,6 @@ function getGazeLeft(landmarks) {
   return getGazeOffset(landmarks[LEFT_IRIS_CENTER], landmarks[LEFT_EYE_OUTER_MP], landmarks[LEFT_EYE_INNER_MP], landmarks[LEFT_EYE_TOP], landmarks[LEFT_EYE_BOTTOM]);
 }
 
-function mirrorLandmarks(faceLandmarks) {
-  return faceLandmarks.map((lm) => ({ ...lm, x: 1.0 - Number(lm.x || 0), y: Number(lm.y || 0), z: Number(lm.z || 0) }));
-}
-
 function convertBlendshapes(faceBlendshapes) {
   const out = Object.create(null);
   for (const item of Array.isArray(faceBlendshapes) ? faceBlendshapes : []) {
@@ -155,12 +152,11 @@ function convertBlendshapes(faceBlendshapes) {
   return out;
 }
 
-function buildTrackingFrame(result, flipX) {
+function buildTrackingFrame(result) {
   if (!result?.faceLandmarks?.length) {
     return { hasFocus: false, reason: "no-face", blendshapes: Object.create(null), bones: Object.create(null) };
   }
-  const rawLandmarks = result.faceLandmarks[0];
-  const landmarks = flipX ? mirrorLandmarks(rawLandmarks) : rawLandmarks;
+  const landmarks = result.faceLandmarks[0];
   const triplets = landmarks.map((lm) => [Number(lm.x) || 0, Number(lm.y) || 0, Number(lm.z) || 0]);
   const { rotationMatrix } = computeFixedRotationMatrix(triplets);
   const quat = rotationMatrixToQuaternion(rotationMatrix);
@@ -168,6 +164,11 @@ function buildTrackingFrame(result, flipX) {
   const rightGaze = getGazeRight(landmarks);
   const leftGaze = getGazeLeft(landmarks);
   const blendshapes = convertBlendshapes(result.faceBlendshapes?.[0]);
+  if (state.config.invertHorizontal) {
+    euler.yaw = -euler.yaw;
+    rightGaze[0] = -rightGaze[0];
+    leftGaze[0] = -leftGaze[0];
+  }
   blendshapes.GazeRightX = rightGaze[0];
   blendshapes.GazeRightY = rightGaze[1];
   blendshapes.GazeLeftX = leftGaze[0];
@@ -219,10 +220,16 @@ self.onmessage = async (event) => {
       state.canvas = new OffscreenCanvas(Math.max(1, width), Math.max(1, height));
       state.ctx = state.canvas.getContext("2d");
     }
+    state.ctx.save();
     state.ctx.clearRect(0, 0, width, height);
+    if (state.config.flipX) {
+      state.ctx.translate(width, 0);
+      state.ctx.scale(-1, 1);
+    }
     state.ctx.drawImage(bitmap, 0, 0, width, height);
+    state.ctx.restore();
     const result = landmarker.detectForVideo(state.canvas, Number(data.timestampMs) || performance.now());
-    self.postMessage({ type: "tracking", seq: Number(data.seq) || 0, frame: buildTrackingFrame(result, !!state.config.flipX) });
+    self.postMessage({ type: "tracking", seq: Number(data.seq) || 0, frame: buildTrackingFrame(result) });
   } catch (error) {
     self.postMessage({ type: "tracking-error", error: String(error && error.message ? error.message : error) });
   } finally {

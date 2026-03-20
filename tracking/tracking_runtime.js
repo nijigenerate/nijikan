@@ -321,11 +321,12 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, log = () => {}, flipX = true } = {}) {
+  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false } = {}) {
     this.video = video;
     this.statusEl = statusEl;
     this.log = log;
     this.flipX = !!flipX;
+    this.invertHorizontal = !!invertHorizontal;
     this.params = [];
     this.bindings = [];
     this.worker = null;
@@ -383,6 +384,26 @@ export class WebcamTrackingController {
     this.setStatus(this.bindings.length > 0 ? `tracking ready (${this.bindings.length} bindings)` : "tracking ready (no bindings)");
   }
 
+  applyWorkerConfig() {
+    if (!this.worker) return;
+    this.worker.postMessage({
+      type: "config",
+      config: {
+        flipX: this.flipX,
+        invertHorizontal: this.invertHorizontal,
+        wasmPath: "/vendor/package/wasm",
+        modelAssetPath: "/tracking/face_landmarker_v2_with_blendshapes.task",
+      },
+    });
+  }
+
+  setTrackingOptions({ invertHorizontal } = {}) {
+    if (typeof invertHorizontal === "boolean") {
+      this.invertHorizontal = invertHorizontal;
+    }
+    this.applyWorkerConfig();
+  }
+
   async start() {
     if (this.started) return;
     if (!this.video) throw new Error("tracking video element is missing");
@@ -409,14 +430,7 @@ export class WebcamTrackingController {
       this.pendingBitmap = false;
       this.setStatus(`tracking error: ${String(event?.message || "worker failed to load")}`);
     };
-    this.worker.postMessage({
-      type: "config",
-      config: {
-        flipX: this.flipX,
-        wasmPath: "/vendor/package/wasm",
-        modelAssetPath: "/tracking/face_landmarker_v2_with_blendshapes.task",
-      },
-    });
+    this.applyWorkerConfig();
 
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
