@@ -7,6 +7,10 @@ import pathlib
 import socketserver
 import urllib.parse
 
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("application/javascript", ".cjs")
+mimetypes.add_type("application/wasm", ".wasm")
+
 
 class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
@@ -16,7 +20,7 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
     models_root: pathlib.Path = None
 
     def end_headers(self):
-        # Disable browser caching so /models/model.inx always reflects current file state.
+        # Disable browser caching in dev so index/html/js/wasm changes are visible immediately.
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
@@ -101,13 +105,13 @@ class NicxHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Serve nicxlive wasm app and mount a models directory to /models")
+    parser = argparse.ArgumentParser(description="Serve nijikan wasm app and mount a models directory to /models")
     parser.add_argument("--models-dir", required=True, help="Directory mounted as /models")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on")
     args = parser.parse_args()
 
     script_dir = pathlib.Path(__file__).resolve().parent
-    nicxlive_root = script_dir.parent
+    app_root = script_dir
     models_root = pathlib.Path(args.models_dir).expanduser().resolve()
 
     if not models_root.is_dir():
@@ -116,11 +120,17 @@ def main():
     handler = NicxHandler
     handler.models_root = models_root
 
-    with ReusableTCPServer(("127.0.0.1", args.port), lambda *a, **k: handler(*a, directory=str(nicxlive_root), **k)) as httpd:
-        print(f"serving nicxlive root: {nicxlive_root}")
+    with ReusableTCPServer(("127.0.0.1", args.port), lambda *a, **k: handler(*a, directory=str(app_root), **k)) as httpd:
+        print(f"serving nijikan root: {app_root}")
         print(f"models mapping: /models/* -> {models_root}")
         print(f"open: http://127.0.0.1:{args.port}/index.html")
-        httpd.serve_forever()
+        try:
+            httpd.serve_forever(poll_interval=0.2)
+        except KeyboardInterrupt:
+            print("\nstopping server...")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

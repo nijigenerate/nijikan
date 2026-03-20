@@ -3020,5 +3020,6 @@ export function createNicxWasmBindings(codec) {
     fnGetWasmLayout: codec.reqExport("njgGetWasmLayout"),
     fnGetParameters: codec.optExport("njgGetParameters"),
     fnUpdateParameters: codec.optExport("njgUpdateParameters"),
+    fnGetPuppetExtData: codec.optExport("njgGetPuppetExtData"),
   };
 }

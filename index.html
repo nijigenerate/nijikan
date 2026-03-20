@@ -227,6 +227,20 @@
       text-overflow: ellipsis;
     }
     #scale { width: 120px; }
+    #trackingStatus {
+      color: #b8d8ff;
+      min-width: 120px;
+      max-width: min(48vw, 520px);
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+    #trackingVideo {
+      display: none !important;
+    }
+    #trackingVideo[hidden] {
+      display: none;
+    }
     #ui > * { flex: 0 0 auto; max-width: 100%; }
     @media (max-width: 980px) {
       #modelComboBox {
@@ -493,6 +507,8 @@
     <button id="refreshModels">refresh</button>
     <button id="start">start</button>
     <button id="stop" disabled>stop</button>
+    <button id="trackingToggle">tracking</button>
+    <span id="trackingStatus">tracking off</span>
     <label>scale</label>
     <input id="scale" type="range" min="0.05" max="2.0" step="0.01" value="0.15" />
     <span id="scaleVal">0.15</span>
@@ -506,6 +522,7 @@
       <pre id="log"></pre>
     </div>
   </div>
+  <video id="trackingVideo" playsinline muted hidden aria-hidden="true"></video>
 
   <script type="module">
     import {
@@ -519,12 +536,17 @@
       createNicxWasmCodec,
       createNicxWasmBindings,
     } from "../webgl_backend/webgl_backend.js";
+    import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
     const WASM_TEST_VERSION = "wasm-index-2026-02-28-24";
     const WASM_TEST_LOG_ENABLED = false;
+    const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
     const canvas = document.getElementById("cv");
     const startBtn = document.getElementById("start");
     const stopBtn = document.getElementById("stop");
+    const trackingToggleBtn = document.getElementById("trackingToggle");
+    const trackingStatusEl = document.getElementById("trackingStatus");
+    const trackingVideo = document.getElementById("trackingVideo");
     const scaleInput = document.getElementById("scale");
     const scaleVal = document.getElementById("scaleVal");
     const bgColorInput = document.getElementById("bgColor");
@@ -538,6 +560,8 @@
     const paramPanel = document.getElementById("paramPanel");
     let Module = null;
     let runtimeControl = null;
+    let trackingEnabled = false;
+    let trackingController = null;
     let isLaunching = false;
     let wasmPrepared = false;
     let modelEntries = [];
@@ -584,6 +608,76 @@
         out += bytes[i].toString(16).padStart(2, "0");
       }
       return out;
+    }
+
+    function readUtf8Bytes(ptr, length) {
+      if (!ptr || !length) return new Uint8Array(0);
+      return new Uint8Array(Module.HEAPU8.slice(ptr, ptr + length));
+    }
+
+    function applyParameterUpdates(apis, codec, puppet, updates) {
+      if (!apis?.fnUpdateParameters || !Array.isArray(updates) || updates.length === 0) return;
+      const stride = codec.layout.SizePuppetParameterUpdate;
+      const ptr = codec.getMalloc()(stride * updates.length);
+      try {
+        for (let i = 0; i < updates.length; i += 1) {
+          const base = ptr + i * stride;
+          const update = updates[i];
+          Module.HEAPU32[(base >>> 2) + 0] = Number(update.uuid) >>> 0;
+          Module.HEAPF32[(base >>> 2) + 1] = Number(update.x) || 0;
+          Module.HEAPF32[(base >>> 2) + 2] = Number(update.y) || 0;
+        }
+        const rr = apis.fnUpdateParameters(puppet, ptr, updates.length);
+        if (rr !== codec.layout.Ok) {
+          log("WARN", "njgUpdateParameters(batch) failed:", rr, "count", updates.length);
+        }
+      } finally {
+        apis.free(ptr);
+      }
+    }
+
+    function readPuppetExtData(apis, codec, puppet, key) {
+      if (!apis?.fnGetPuppetExtData) return "";
+      const keyPtr = codec.writeCString(key);
+      const outDataPtr = codec.getMalloc()(4);
+      const outLenPtr = codec.getMalloc()(4);
+      let text = "";
+      try {
+        Module.HEAPU32[outDataPtr >>> 2] = 0;
+        Module.HEAPU32[outLenPtr >>> 2] = 0;
+        const rr = apis.fnGetPuppetExtData(puppet, keyPtr, outDataPtr, outLenPtr);
+        if (rr !== codec.layout.Ok) return "";
+        const dataPtr = Module.HEAPU32[outDataPtr >>> 2] >>> 0;
+        const dataLen = Module.HEAPU32[outLenPtr >>> 2] >>> 0;
+        if (!dataPtr || !dataLen) return "";
+        text = new TextDecoder().decode(readUtf8Bytes(dataPtr, dataLen));
+      } catch (e) {
+        log("WARN", "read puppet ext failed:", String(e && e.message ? e.message : e));
+      } finally {
+        apis.free(keyPtr);
+        apis.free(outDataPtr);
+        apis.free(outLenPtr);
+      }
+      return text;
+    }
+
+    async function ensureTrackingController(params, bindingJsonText) {
+      if (!trackingController) {
+        trackingController = new WebcamTrackingController({
+          video: trackingVideo,
+          statusEl: trackingStatusEl,
+          log,
+          flipX: true,
+        });
+      }
+      trackingController.configure(params, bindingJsonText);
+      if (trackingEnabled) {
+        await trackingController.start();
+        trackingToggleBtn.textContent = "tracking off";
+      } else {
+        trackingController.stop();
+        trackingToggleBtn.textContent = "tracking";
+      }
     }
 
     async function fetchModelList() {
@@ -808,6 +902,7 @@
       console.log("[wasm-test] version:", WASM_TEST_VERSION);
       log("version:", WASM_TEST_VERSION);
     }
+    console.log("[nijikan] version:", WASM_TEST_VERSION);
 
     function readU32(p) { return Module.HEAPU32[p >>> 2] >>> 0; }
 
@@ -1030,14 +1125,10 @@
                 for (let i = 0; i < count; i += 1) {
                   params.push(codec.decodeParameterInfo(infoPtr + i * codec.layout.SizeNjgParameterInfo));
                 }
+                const trackingBindingJson = readPuppetExtData(apis, codec, puppet, TRACKING_BINDINGS_EXT_KEY);
+                await ensureTrackingController(params, trackingBindingJson);
                 createParameterControls(params, (param, x, y) => {
-                  const up = codec.getMalloc()(codec.layout.SizePuppetParameterUpdate);
-                  Module.HEAPU32[(up >>> 2) + 0] = param.uuid >>> 0;
-                  Module.HEAPF32[(up >>> 2) + 1] = x;
-                  Module.HEAPF32[(up >>> 2) + 2] = y;
-                  const rr = apis.fnUpdateParameters(puppet, up, 1);
-                  if (rr !== codec.layout.Ok) log("WARN", "njgUpdateParameters failed:", rr, "uuid", param.uuid);
-                  apis.free(up);
+                  applyParameterUpdates(apis, codec, puppet, [{ uuid: param.uuid, x, y }]);
                 });
               } else {
                 log("WARN", "njgGetParameters(list) failed:", pr);
@@ -1095,6 +1186,9 @@
         canvas.removeEventListener("gesturestart", onTouchGestureBlock);
         canvas.removeEventListener("gesturechange", onTouchGestureBlock);
         stopBtn.disabled = true;
+        if (trackingController) {
+          trackingController.stop();
+        }
         try { apis.fnUnloadPuppet(renderer, puppet); } catch (_) {}
         try { apis.fnDestroyRenderer(renderer); } catch (_) {}
         try { apis.fnRtTerm(); } catch (_) {}
@@ -1250,6 +1344,10 @@
           last = now;
 
           applyPanScale();
+          if (trackingController) {
+            const updates = trackingController.update(dt);
+            applyParameterUpdates(apis, codec, puppet, updates);
+          }
 
           Module.HEAP32[(frameCfgPtr >>> 2) + 0] = canvas.width | 0;
           Module.HEAP32[(frameCfgPtr >>> 2) + 1] = canvas.height | 0;
@@ -1396,6 +1494,30 @@
 
     startBtn.addEventListener("click", () => {
       launchSelectedModel({ forceReload: false });
+    });
+    trackingToggleBtn.addEventListener("click", async () => {
+      trackingEnabled = !trackingEnabled;
+      trackingToggleBtn.disabled = true;
+      try {
+        if (trackingController) {
+          if (trackingEnabled) {
+            await trackingController.start();
+            trackingToggleBtn.textContent = "tracking off";
+          } else {
+            trackingController.stop();
+            trackingToggleBtn.textContent = "tracking";
+          }
+        } else if (!runtimeControl) {
+          trackingStatusEl.textContent = "load a model first";
+          trackingEnabled = false;
+        }
+      } catch (e) {
+        trackingEnabled = false;
+        trackingToggleBtn.textContent = "tracking";
+        trackingStatusEl.textContent = `tracking error: ${String(e && e.message ? e.message : e)}`;
+      } finally {
+        trackingToggleBtn.disabled = false;
+      }
     });
     modelCombo.addEventListener("focus", () => {
       renderModelOptions("");
