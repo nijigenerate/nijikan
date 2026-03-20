@@ -362,13 +362,16 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false, workerVersion = "" } = {}) {
+  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false, workerVersion = "", delegate = "CPU", onStateChange = null } = {}) {
     this.video = video;
     this.statusEl = statusEl;
     this.log = log;
     this.flipX = !!flipX;
     this.invertHorizontal = !!invertHorizontal;
     this.workerVersion = String(workerVersion || "");
+    this.delegate = delegate === "CPU" ? "CPU" : "GPU";
+    this.actualDelegate = this.delegate;
+    this.onStateChange = typeof onStateChange === "function" ? onStateChange : null;
     this.params = [];
     this.bindings = [];
     this.worker = null;
@@ -409,6 +412,21 @@ export class WebcamTrackingController {
 
   setStatus(text) {
     if (this.statusEl) this.statusEl.textContent = String(text || "");
+    this.notifyStateChange();
+  }
+
+  notifyStateChange() {
+    this.onStateChange?.({
+      started: this.started,
+      requestedDelegate: this.delegate,
+      actualDelegate: this.actualDelegate,
+      status: this.statusEl ? this.statusEl.textContent : "",
+      ready: this.debug.ready,
+    });
+  }
+
+  getActualDelegate() {
+    return this.actualDelegate;
   }
 
   collectTopBlendshapes(frame, limit = 5) {
@@ -526,17 +544,23 @@ export class WebcamTrackingController {
       config: {
         flipX: this.flipX,
         invertHorizontal: this.invertHorizontal,
+        delegate: this.delegate,
         wasmPath: `${this.appBasePath}vendor/package/wasm`,
         modelAssetPath: `${this.appBasePath}tracking/face_landmarker_v2_with_blendshapes.task`,
       },
     });
   }
 
-  setTrackingOptions({ invertHorizontal } = {}) {
+  setTrackingOptions({ invertHorizontal, delegate } = {}) {
     if (typeof invertHorizontal === "boolean") {
       this.invertHorizontal = invertHorizontal;
     }
+    if (typeof delegate === "string") {
+      this.delegate = delegate === "CPU" ? "CPU" : "GPU";
+      this.actualDelegate = this.delegate;
+    }
     this.applyWorkerConfig();
+    this.notifyStateChange();
   }
 
   async start() {
@@ -548,11 +572,16 @@ export class WebcamTrackingController {
     this.worker.onmessage = (event) => {
       const data = event?.data || {};
       if (data.type === "tracking-ready") {
+        this.actualDelegate = data.delegate === "GPU" ? "GPU" : "CPU";
         this.debug.ready = true;
         this.log("tracking worker ready");
         if (this.started && this.debug.frameSeq === 0) {
           this.setStatus("tracking worker ready, waiting for first frame");
         }
+      } else if (data.type === "tracking-warning") {
+        this.actualDelegate = data.delegate === "GPU" ? "GPU" : "CPU";
+        this.log(data.warning || "tracking warning");
+        this.setStatus(String(data.warning || "tracking warning"));
       } else if (data.type === "tracking") {
         this.latestFrame = data.frame || null;
         this.pendingBitmap = false;
@@ -615,6 +644,7 @@ export class WebcamTrackingController {
       this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
     }
     this.started = true;
+    this.actualDelegate = this.delegate;
     this.setStatus("camera started, waiting for face");
     this.startWatchdog = window.setTimeout(() => {
       if (!this.started) return;
@@ -667,6 +697,7 @@ export class WebcamTrackingController {
     this.debug.lastReason = "stopped";
     this.debug.ready = false;
     this.debug.updateCount = 0;
+    this.actualDelegate = this.delegate;
     this.setStatus("tracking stopped");
   }
 

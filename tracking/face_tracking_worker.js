@@ -43,17 +43,71 @@ const LEFT_EYE_BOTTOM = 374;
 
 const state = {
   faceLandmarker: null,
-  canvas: null,
-  ctx: null,
+  taskCanvas: null,
+  taskGl: null,
   config: {
     runningMode: "VIDEO",
     wasmPath: `${APP_BASE_PATH}vendor/package/wasm`,
     modelAssetPath: `${APP_BASE_PATH}tracking/face_landmarker_v2_with_blendshapes.task`,
+    delegate: "CPU",
     numFaces: 1,
     flipX: true,
     invertHorizontal: false,
   },
 };
+
+function closeFaceLandmarker() {
+  try {
+    state.faceLandmarker?.close?.();
+  } catch (_) {}
+  state.faceLandmarker = null;
+}
+
+function ensureTaskCanvas(width, height, delegate) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const useGpu = delegate === "GPU";
+  if (!useGpu) {
+    state.taskCanvas = null;
+    state.taskGl = null;
+    return;
+  }
+  if (!state.taskCanvas || state.taskCanvas.width !== safeWidth || state.taskCanvas.height !== safeHeight) {
+    state.taskCanvas = new OffscreenCanvas(safeWidth, safeHeight);
+    state.taskGl = null;
+  }
+  if (!state.taskGl) {
+    state.taskGl = state.taskCanvas.getContext("webgl2", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: false,
+    });
+  }
+  if (!state.taskGl) {
+    state.taskCanvas = null;
+    throw new Error("tracking GPU delegate requested but WebGL2 is unavailable in worker");
+  }
+}
+
+function downgradeToCpuDelegate(reason) {
+  if (state.config.delegate !== "GPU") return false;
+  closeFaceLandmarker();
+  state.taskCanvas = null;
+  state.taskGl = null;
+  state.config = {
+    ...state.config,
+    delegate: "CPU",
+  };
+  self.postMessage({
+    type: "tracking-warning",
+    warning: `GPU delegate unavailable, falling back to CPU: ${reason}`,
+    delegate: state.config.delegate,
+  });
+  return true;
+}
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
@@ -204,6 +258,10 @@ function mirrorBlendshapes(blendshapes) {
   return mirrored;
 }
 
+function shouldMirrorTrackingOutput() {
+  return !!state.config.flipX !== !!state.config.invertHorizontal;
+}
+
 function buildTrackingFrame(result) {
   if (!result?.faceLandmarks?.length) {
     return { hasFocus: false, reason: "no-face", blendshapes: Object.create(null), bones: Object.create(null) };
@@ -213,19 +271,23 @@ function buildTrackingFrame(result) {
   const { rotationMatrix } = computeFixedRotationMatrix(triplets);
   const quat = rotationMatrixToQuaternion(rotationMatrix);
   const euler = rotationMatrixToEulerZxy(rotationMatrix);
+  euler.yaw = -euler.yaw;
   const rightGaze = getGazeRight(landmarks);
   const leftGaze = getGazeLeft(landmarks);
+  const nose = landmarks[NOSE_TIP];
   let blendshapes = convertBlendshapes(result.faceBlendshapes?.[0]);
   blendshapes.GazeRightX = rightGaze[0];
   blendshapes.GazeRightY = rightGaze[1];
   blendshapes.GazeLeftX = leftGaze[0];
   blendshapes.GazeLeftY = leftGaze[1];
-  if (state.config.invertHorizontal) {
+  if (shouldMirrorTrackingOutput()) {
+    if (nose) {
+      nose.x = 1.0 - Number(nose.x || 0);
+    }
     euler.yaw = -euler.yaw;
     euler.roll = -euler.roll;
     blendshapes = mirrorBlendshapes(blendshapes);
   }
-  const nose = landmarks[NOSE_TIP];
   return {
     hasFocus: true,
     reason: "ok",
@@ -244,44 +306,71 @@ async function ensureFaceLandmarker() {
   if (state.faceLandmarker) return state.faceLandmarker;
   const { FaceLandmarker, FilesetResolver } = await ensureTasksVisionLoaded();
   const vision = await FilesetResolver.forVisionTasks(state.config.wasmPath);
-  state.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: state.config.modelAssetPath },
-    outputFaceBlendshapes: true,
-    runningMode: state.config.runningMode,
-    numFaces: state.config.numFaces,
-  });
-  return state.faceLandmarker;
+  for (;;) {
+    const options = {
+      baseOptions: {
+        modelAssetPath: state.config.modelAssetPath,
+        delegate: state.config.delegate,
+      },
+      outputFaceBlendshapes: true,
+      runningMode: state.config.runningMode,
+      numFaces: state.config.numFaces,
+    };
+    if (state.config.delegate === "GPU") {
+      if (!state.taskCanvas) {
+        throw new Error("tracking GPU delegate requested before task canvas initialization");
+      }
+      options.canvas = state.taskCanvas;
+    }
+    try {
+      state.faceLandmarker = await FaceLandmarker.createFromOptions(vision, options);
+      return state.faceLandmarker;
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (!downgradeToCpuDelegate(message)) {
+        throw error;
+      }
+    }
+  }
 }
 
 self.onmessage = async (event) => {
   const data = event?.data || {};
   if (data.type === "config") {
-    state.config = {
+    const nextConfig = {
       ...state.config,
       ...(data.config && typeof data.config === "object" ? data.config : {}),
     };
-    self.postMessage({ type: "tracking-ready" });
+    const requiresRecreate =
+      nextConfig.wasmPath !== state.config.wasmPath ||
+      nextConfig.modelAssetPath !== state.config.modelAssetPath ||
+      nextConfig.delegate !== state.config.delegate ||
+      nextConfig.runningMode !== state.config.runningMode ||
+      nextConfig.numFaces !== state.config.numFaces;
+    state.config = {
+      ...nextConfig,
+    };
+    if (requiresRecreate) {
+      closeFaceLandmarker();
+    }
+    self.postMessage({ type: "tracking-ready", delegate: state.config.delegate });
     return;
   }
   const inputFrame = data.videoFrame || data.bitmap || null;
   if (data.type !== "frame" || !inputFrame) return;
   try {
-    const landmarker = await ensureFaceLandmarker();
     const width = inputFrame.displayWidth || inputFrame.codedWidth || inputFrame.width || 0;
     const height = inputFrame.displayHeight || inputFrame.codedHeight || inputFrame.height || 0;
-    if (!state.canvas || state.canvas.width !== width || state.canvas.height !== height) {
-      state.canvas = new OffscreenCanvas(Math.max(1, width), Math.max(1, height));
-      state.ctx = state.canvas.getContext("2d");
+    try {
+      ensureTaskCanvas(width, height, state.config.delegate);
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (!downgradeToCpuDelegate(message)) {
+        throw error;
+      }
     }
-    state.ctx.save();
-    state.ctx.clearRect(0, 0, width, height);
-    if (state.config.flipX) {
-      state.ctx.translate(width, 0);
-      state.ctx.scale(-1, 1);
-    }
-    state.ctx.drawImage(inputFrame, 0, 0, width, height);
-    state.ctx.restore();
-    const result = landmarker.detectForVideo(state.canvas, Number(data.timestampMs) || performance.now());
+    const landmarker = await ensureFaceLandmarker();
+    const result = landmarker.detectForVideo(inputFrame, Number(data.timestampMs) || performance.now());
     self.postMessage({ type: "tracking", seq: Number(data.seq) || 0, frame: buildTrackingFrame(result) });
   } catch (error) {
     self.postMessage({ type: "tracking-error", error: String(error && error.message ? error.message : error) });
