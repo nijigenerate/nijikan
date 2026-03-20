@@ -129,7 +129,6 @@ def main():
         except KeyboardInterrupt:
             print("\nstopping server...")
         finally:
-            httpd.shutdown()
             httpd.server_close()
 
 
