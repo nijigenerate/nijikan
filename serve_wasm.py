@@ -5,6 +5,7 @@ import json
 import mimetypes
 import pathlib
 import socketserver
+import threading
 import urllib.parse
 
 mimetypes.add_type("application/javascript", ".mjs")
@@ -17,8 +18,9 @@ MODEL_LIST_PATH = f"{APP_PREFIX}/models/__list"
 MANIFEST_JSON_PATH = f"{APP_PREFIX}/manifest.json"
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 class NicxHandler(http.server.SimpleHTTPRequestHandler):
@@ -173,13 +175,17 @@ def main():
     handler.models_root = models_root
 
     with ReusableTCPServer(("127.0.0.1", args.port), lambda *a, **k: handler(*a, directory=str(app_root), **k)) as httpd:
+        httpd.timeout = 0.2
         print(f"serving nijikan root: {app_root}")
         print(f"models mapping: {MODELS_PREFIX}* -> {models_root}")
         print(f"open: http://127.0.0.1:{args.port}{APP_PREFIX}/index.html")
+        stop_event = threading.Event()
         try:
-            httpd.serve_forever(poll_interval=0.2)
+            while not stop_event.is_set():
+                httpd.handle_request()
         except KeyboardInterrupt:
             print("\nstopping server...")
+            stop_event.set()
         finally:
             httpd.server_close()
 
