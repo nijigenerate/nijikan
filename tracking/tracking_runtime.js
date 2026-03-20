@@ -373,6 +373,10 @@ export class WebcamTrackingController {
     this.bindings = [];
     this.worker = null;
     this.stream = null;
+    this.videoTrack = null;
+    this.trackProcessor = null;
+    this.trackReader = null;
+    this.framePumpPromise = null;
     this.latestFrame = null;
     this.pendingBitmap = false;
     this.running = false;
@@ -592,35 +596,43 @@ export class WebcamTrackingController {
         height: { ideal: 480 },
       },
     });
-    this.video.srcObject = this.stream;
-    await this.video.play();
-
-    this.frameScheduler = pickVideoFrameCallback(this.video);
+    this.videoTrack = this.stream.getVideoTracks?.()[0] || null;
     this.running = true;
-    this.frameCallback = async () => {
-      if (!this.running) return;
-      if (!this.pendingBitmap && this.worker && this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        try {
-          if (this.video.currentTime === this.lastVideoTime) {
-            this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
-            return;
+    if (typeof MediaStreamTrackProcessor === "function" && this.videoTrack) {
+      this.trackProcessor = new MediaStreamTrackProcessor({ track: this.videoTrack });
+      this.trackReader = this.trackProcessor.readable.getReader();
+      this.framePumpPromise = this.pumpTrackFrames();
+    } else {
+      if (!this.video) throw new Error("tracking video element is missing");
+      this.video.srcObject = this.stream;
+      await this.video.play();
+      this.frameScheduler = pickVideoFrameCallback(this.video);
+      this.frameCallback = async () => {
+        if (!this.running) return;
+        if (!this.pendingBitmap && this.worker && this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          try {
+            if (this.video.currentTime === this.lastVideoTime) {
+              this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
+              return;
+            }
+            this.lastVideoTime = this.video.currentTime;
+            const nowMs = performance.now();
+            const bitmap = await createImageBitmap(this.video);
+            this.pendingBitmap = true;
+            this.worker.postMessage({
+              type: "frame",
+              seq: ++this.seq,
+              timestampMs: nowMs,
+              bitmap,
+            }, [bitmap]);
+          } catch (error) {
+            this.setStatus(`tracking error: ${String(error && error.message ? error.message : error)}`);
           }
-          this.lastVideoTime = this.video.currentTime;
-          const bitmap = await createImageBitmap(this.video);
-          this.pendingBitmap = true;
-          this.worker.postMessage({
-            type: "frame",
-            seq: ++this.seq,
-            timestampMs: performance.now(),
-            bitmap,
-          }, [bitmap]);
-        } catch (error) {
-          this.setStatus(`tracking error: ${String(error && error.message ? error.message : error)}`);
         }
-      }
+        this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
+      };
       this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
-    };
-    this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
+    }
     this.started = true;
     this.setStatus("camera started, waiting for face");
     this.startWatchdog = window.setTimeout(() => {
@@ -642,6 +654,14 @@ export class WebcamTrackingController {
       this.videoFrameHandle = 0;
     }
     this.frameScheduler = null;
+    if (this.trackReader) {
+      this.trackReader.cancel().catch(() => {});
+      this.trackReader.releaseLock?.();
+      this.trackReader = null;
+    }
+    this.trackProcessor = null;
+    this.framePumpPromise = null;
+    this.videoTrack = null;
     if (this.startWatchdog) {
       window.clearTimeout(this.startWatchdog);
       this.startWatchdog = 0;
@@ -680,5 +700,39 @@ export class WebcamTrackingController {
     this.debug.updateCount = updates.length;
     this.refreshDebugText();
     return updates;
+  }
+
+  async pumpTrackFrames() {
+    while (this.running && this.trackReader && this.worker) {
+      let record;
+      try {
+        record = await this.trackReader.read();
+      } catch (_) {
+        break;
+      }
+      if (!record || record.done) break;
+      const frame = record.value;
+      if (!frame) continue;
+      const timestampUs = Number(frame.timestamp);
+      const timestampMs = Number.isFinite(timestampUs) ? (timestampUs / 1000.0) : performance.now();
+      if (this.pendingBitmap) {
+        try { frame.close?.(); } catch (_) {}
+        continue;
+      }
+      this.pendingBitmap = true;
+      try {
+        this.worker.postMessage({
+          type: "frame",
+          seq: ++this.seq,
+          timestampMs,
+          videoFrame: frame,
+        }, [frame]);
+      } catch (error) {
+        this.pendingBitmap = false;
+        try { frame.close?.(); } catch (_) {}
+        this.setStatus(`tracking error: ${String(error && error.message ? error.message : error)}`);
+        break;
+      }
+    }
   }
 }

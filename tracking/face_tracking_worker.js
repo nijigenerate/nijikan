@@ -213,12 +213,12 @@ self.onmessage = async (event) => {
     self.postMessage({ type: "tracking-ready" });
     return;
   }
-  if (data.type !== "frame" || !data.bitmap) return;
+  const inputFrame = data.videoFrame || data.bitmap || null;
+  if (data.type !== "frame" || !inputFrame) return;
   try {
     const landmarker = await ensureFaceLandmarker();
-    const bitmap = data.bitmap;
-    const width = bitmap.width || 0;
-    const height = bitmap.height || 0;
+    const width = inputFrame.displayWidth || inputFrame.codedWidth || inputFrame.width || 0;
+    const height = inputFrame.displayHeight || inputFrame.codedHeight || inputFrame.height || 0;
     if (!state.canvas || state.canvas.width !== width || state.canvas.height !== height) {
       state.canvas = new OffscreenCanvas(Math.max(1, width), Math.max(1, height));
       state.ctx = state.canvas.getContext("2d");
@@ -229,13 +229,13 @@ self.onmessage = async (event) => {
       state.ctx.translate(width, 0);
       state.ctx.scale(-1, 1);
     }
-    state.ctx.drawImage(bitmap, 0, 0, width, height);
+    state.ctx.drawImage(inputFrame, 0, 0, width, height);
     state.ctx.restore();
     const result = landmarker.detectForVideo(state.canvas, Number(data.timestampMs) || performance.now());
     self.postMessage({ type: "tracking", seq: Number(data.seq) || 0, frame: buildTrackingFrame(result) });
   } catch (error) {
     self.postMessage({ type: "tracking-error", error: String(error && error.message ? error.message : error) });
   } finally {
-    try { data.bitmap.close?.(); } catch (_) {}
+    try { inputFrame.close?.(); } catch (_) {}
   }
 };
