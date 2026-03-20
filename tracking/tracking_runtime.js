@@ -362,13 +362,14 @@ function pickVideoFrameCallback(video) {
 }
 
 export class WebcamTrackingController {
-  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false, workerVersion = "" } = {}) {
+  constructor({ video, statusEl = null, log = () => {}, flipX = true, invertHorizontal = false, workerVersion = "", delegate = "CPU" } = {}) {
     this.video = video;
     this.statusEl = statusEl;
     this.log = log;
     this.flipX = !!flipX;
     this.invertHorizontal = !!invertHorizontal;
     this.workerVersion = String(workerVersion || "");
+    this.delegate = delegate === "CPU" ? "CPU" : "GPU";
     this.params = [];
     this.bindings = [];
     this.worker = null;
@@ -526,15 +527,19 @@ export class WebcamTrackingController {
       config: {
         flipX: this.flipX,
         invertHorizontal: this.invertHorizontal,
+        delegate: this.delegate,
         wasmPath: `${this.appBasePath}vendor/package/wasm`,
         modelAssetPath: `${this.appBasePath}tracking/face_landmarker_v2_with_blendshapes.task`,
       },
     });
   }
 
-  setTrackingOptions({ invertHorizontal } = {}) {
+  setTrackingOptions({ invertHorizontal, delegate } = {}) {
     if (typeof invertHorizontal === "boolean") {
       this.invertHorizontal = invertHorizontal;
+    }
+    if (typeof delegate === "string") {
+      this.delegate = delegate === "CPU" ? "CPU" : "GPU";
     }
     this.applyWorkerConfig();
   }
@@ -553,6 +558,9 @@ export class WebcamTrackingController {
         if (this.started && this.debug.frameSeq === 0) {
           this.setStatus("tracking worker ready, waiting for first frame");
         }
+      } else if (data.type === "tracking-warning") {
+        this.log(data.warning || "tracking warning");
+        this.setStatus(String(data.warning || "tracking warning"));
       } else if (data.type === "tracking") {
         this.latestFrame = data.frame || null;
         this.pendingBitmap = false;
