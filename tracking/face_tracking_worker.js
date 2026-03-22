@@ -45,6 +45,7 @@ const state = {
   faceLandmarker: null,
   taskCanvas: null,
   taskGl: null,
+  evaluatorPort: null,
   config: {
     runningMode: "VIDEO",
     wasmPath: `${APP_BASE_PATH}vendor/package/wasm`,
@@ -55,6 +56,39 @@ const state = {
     invertHorizontal: false,
   },
 };
+
+function collectTopBlendshapes(frame, limit = 5) {
+  const entries = Object.entries(frame?.blendshapes || {})
+    .filter(([, value]) => Number.isFinite(value) && Math.abs(value) > 0.01)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, limit);
+  return entries.map(([name, value]) => `${name}=${Number(value).toFixed(2)}`).join(", ");
+}
+
+function buildTrackingStatus(frame) {
+  if (!frame?.hasFocus) {
+    return {
+      hasFocus: false,
+      reason: String(frame?.reason || "unknown"),
+      blendshapeCount: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      topBlendshapes: "",
+    };
+  }
+  const head = frame?.bones?.Head || null;
+  const rotation = head?.rotation || {};
+  return {
+    hasFocus: true,
+    reason: "ok",
+    blendshapeCount: Object.keys(frame?.blendshapes || {}).length,
+    yaw: Number(rotation.yaw || 0),
+    pitch: Number(rotation.pitch || 0),
+    roll: Number(rotation.roll || 0),
+    topBlendshapes: collectTopBlendshapes(frame),
+  };
+}
 
 function closeFaceLandmarker() {
   try {
@@ -336,6 +370,12 @@ async function ensureFaceLandmarker() {
 
 self.onmessage = async (event) => {
   const data = event?.data || {};
+  if (data.type === "bind-evaluator-port") {
+    const [port] = event.ports || [];
+    state.evaluatorPort = port || null;
+    state.evaluatorPort?.start?.();
+    return;
+  }
   if (data.type === "config") {
     const nextConfig = {
       ...state.config,
@@ -371,7 +411,21 @@ self.onmessage = async (event) => {
     }
     const landmarker = await ensureFaceLandmarker();
     const result = landmarker.detectForVideo(inputFrame, Number(data.timestampMs) || performance.now());
-    self.postMessage({ type: "tracking", seq: Number(data.seq) || 0, frame: buildTrackingFrame(result) });
+    const frame = buildTrackingFrame(result);
+    const seq = Number(data.seq) || 0;
+    const timestampMs = Number(data.timestampMs) || performance.now();
+    state.evaluatorPort?.postMessage({
+      type: "frame",
+      seq,
+      timestampMs,
+      frame,
+    });
+    self.postMessage({
+      type: "tracking-status",
+      seq,
+      timestampMs,
+      status: buildTrackingStatus(frame),
+    });
   } catch (error) {
     self.postMessage({ type: "tracking-error", error: String(error && error.message ? error.message : error) });
   } finally {

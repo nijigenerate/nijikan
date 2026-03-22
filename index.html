@@ -861,7 +861,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-02-28-24";
+    const WASM_TEST_VERSION = "wasm-index-2026-03-23-26";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -1285,21 +1285,36 @@
       return new Uint8Array(Module.HEAPU8.slice(ptr, ptr + length));
     }
 
+    const lastTrackedParamValues = new Map();
+
     function applyParameterUpdates(apis, codec, puppet, updates) {
       if (!apis?.fnUpdateParameters || !Array.isArray(updates) || updates.length === 0) return;
-      const stride = codec.layout.SizePuppetParameterUpdate;
-      const ptr = codec.getMalloc()(stride * updates.length);
-      try {
-        for (let i = 0; i < updates.length; i += 1) {
-          const base = ptr + i * stride;
-          const update = updates[i];
-          Module.HEAPU32[(base >>> 2) + 0] = Number(update.uuid) >>> 0;
-          Module.HEAPF32[(base >>> 2) + 1] = Number(update.x) || 0;
-          Module.HEAPF32[(base >>> 2) + 2] = Number(update.y) || 0;
+      const filtered = [];
+      for (const update of updates) {
+        const uuid = Number(update?.uuid) >>> 0;
+        const x = Number(update?.x) || 0;
+        const y = Number(update?.y) || 0;
+        const prev = lastTrackedParamValues.get(uuid);
+        if (prev && Math.abs(prev.x - x) < 1e-4 && Math.abs(prev.y - y) < 1e-4) {
+          continue;
         }
-        const rr = apis.fnUpdateParameters(puppet, ptr, updates.length);
+        lastTrackedParamValues.set(uuid, { x, y });
+        filtered.push({ uuid, x, y });
+      }
+      if (filtered.length === 0) return;
+      const stride = codec.layout.SizePuppetParameterUpdate;
+      const ptr = codec.getMalloc()(stride * filtered.length);
+      try {
+        for (let i = 0; i < filtered.length; i += 1) {
+          const base = ptr + i * stride;
+          const update = filtered[i];
+          Module.HEAPU32[(base >>> 2) + 0] = update.uuid;
+          Module.HEAPF32[(base >>> 2) + 1] = update.x;
+          Module.HEAPF32[(base >>> 2) + 2] = update.y;
+        }
+        const rr = apis.fnUpdateParameters(puppet, ptr, filtered.length);
         if (rr !== codec.layout.Ok) {
-          log("WARN", "njgUpdateParameters(batch) failed:", rr, "count", updates.length);
+          log("WARN", "njgUpdateParameters(batch) failed:", rr, "count", filtered.length);
         }
       } finally {
         apis.free(ptr);
@@ -2014,7 +2029,7 @@
 
           applyPanScale();
           if (trackingController) {
-            const updates = trackingController.update(dt);
+            const updates = trackingController.update(dt, now);
             applyParameterUpdates(apis, codec, puppet, updates);
           }
 

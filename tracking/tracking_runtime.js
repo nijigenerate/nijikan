@@ -576,14 +576,13 @@ export class WebcamTrackingController {
     this.actualDelegate = this.delegate;
     this.onStateChange = typeof onStateChange === "function" ? onStateChange : null;
     this.params = [];
-    this.bindings = [];
     this.worker = null;
+    this.evaluatorWorker = null;
     this.stream = null;
     this.videoTrack = null;
     this.trackProcessor = null;
     this.trackReader = null;
     this.framePumpPromise = null;
-    this.latestFrame = null;
     this.pendingBitmap = false;
     this.running = false;
     this.started = false;
@@ -593,6 +592,9 @@ export class WebcamTrackingController {
     this.frameScheduler = null;
     this.startWatchdog = 0;
     this.lastVideoTime = -1;
+    this.latestUpdates = [];
+    this.lastAppliedUpdateAt = 0;
+    this.usingBitmapFallback = false;
     this.keyState = new Set();
     this.keyDownHandler = (event) => {
       const key = normalizeKeyId(event?.key);
@@ -600,6 +602,7 @@ export class WebcamTrackingController {
       if (key) this.keyState.add(key);
       if (code) this.keyState.add(code);
       if (code.startsWith("key") && code.length === 4) this.keyState.add(code.slice(3).toUpperCase());
+      this.evaluatorWorker?.postMessage({ type: "key-state", action: "down", key, code });
     };
     this.keyUpHandler = (event) => {
       const key = normalizeKeyId(event?.key);
@@ -607,8 +610,12 @@ export class WebcamTrackingController {
       if (key) this.keyState.delete(key);
       if (code) this.keyState.delete(code);
       if (code.startsWith("key") && code.length === 4) this.keyState.delete(code.slice(3).toUpperCase());
+      this.evaluatorWorker?.postMessage({ type: "key-state", action: "up", key, code });
     };
-    this.blurHandler = () => this.keyState.clear();
+    this.blurHandler = () => {
+      this.keyState.clear();
+      this.evaluatorWorker?.postMessage({ type: "key-state", action: "clear" });
+    };
     this.debug = {
       frameSeq: 0,
       blendshapeCount: 0,
@@ -656,79 +663,6 @@ export class WebcamTrackingController {
     return entries.map(([name, value]) => `${name}=${Number(value).toFixed(2)}`).join(", ");
   }
 
-  collectBindingCoverage(frame) {
-    const sources = new Map();
-    const collectEvaluator = (evaluator) => {
-      if (!evaluator) return;
-      if (evaluator instanceof CompoundBindingEvaluator) {
-        for (const item of evaluator.bindingMap) {
-          collectEvaluator(item?.binding?.evaluator);
-        }
-        return;
-      }
-      if (evaluator instanceof EventBindingEvaluator) {
-        for (const item of evaluator.valueMap) {
-          if (!item?.id) continue;
-          const key = `${item.type}:${item.id}`;
-          if (sources.has(key)) continue;
-          const active = item.type === SOURCE_TYPE.KeyPress
-            ? this.keyState.has(normalizeKeyId(item.id))
-            : false;
-          sources.set(key, { matched: active, active });
-        }
-        return;
-      }
-      if (!(evaluator instanceof RatioBindingEvaluator)) return;
-      if (!evaluator.sourceName) return;
-      const key = `${evaluator.sourceType}:${evaluator.sourceName}`;
-      if (sources.has(key)) return;
-      let matched = false;
-      let active = false;
-      switch (evaluator.sourceType) {
-        case SOURCE_TYPE.Blendshape:
-          matched = hasBlendshape(frame, evaluator.sourceName);
-          if (matched) active = Math.abs(getBlendshape(frame, evaluator.sourceName)) > 0.01;
-          break;
-        case SOURCE_TYPE.BonePosX:
-        case SOURCE_TYPE.BonePosY:
-        case SOURCE_TYPE.BonePosZ:
-        case SOURCE_TYPE.BoneRotRoll:
-        case SOURCE_TYPE.BoneRotPitch:
-        case SOURCE_TYPE.BoneRotYaw:
-          matched = !!getBone(frame, evaluator.sourceName);
-          if (matched) active = Math.abs(getSourceValue(frame, evaluator.sourceType, evaluator.sourceName)) > 0.01;
-          break;
-        case SOURCE_TYPE.KeyPress:
-          matched = this.keyState.has(normalizeKeyId(evaluator.sourceName));
-          active = matched;
-          break;
-        default:
-          break;
-      }
-      sources.set(key, { matched, active });
-    };
-    for (const binding of this.bindings) {
-      collectEvaluator(binding?.evaluator);
-    }
-    let matchedSourceCount = 0;
-    let activeSourceCount = 0;
-    const unresolved = [];
-    for (const info of sources.values()) {
-      if (info.matched) matchedSourceCount += 1;
-      if (info.active) activeSourceCount += 1;
-    }
-    for (const [key, info] of sources.entries()) {
-      if (info.matched) continue;
-      unresolved.push(key.split(":").slice(1).join(":"));
-    }
-    return {
-      sourceCount: sources.size,
-      matchedSourceCount,
-      activeSourceCount,
-      unresolvedSources: unresolved.slice(0, 8).join(", "),
-    };
-  }
-
   updateStatusFromFrame(frame) {
     const reason = frame?.reason || "unknown";
     this.debug.lastReason = reason;
@@ -738,11 +672,6 @@ export class WebcamTrackingController {
       this.debug.pitch = 0;
       this.debug.roll = 0;
       this.debug.topBlendshapes = "";
-      const coverage = this.collectBindingCoverage(frame);
-      this.debug.sourceCount = coverage.sourceCount;
-      this.debug.matchedSourceCount = coverage.matchedSourceCount;
-      this.debug.activeSourceCount = coverage.activeSourceCount;
-      this.debug.unresolvedSources = coverage.unresolvedSources;
       this.setStatus(`tracking idle (${reason})`);
       return;
     }
@@ -755,24 +684,40 @@ export class WebcamTrackingController {
     this.debug.roll = Number(rotation.roll || 0);
     this.debug.topBlendshapes = this.collectTopBlendshapes(frame);
     this.setStatus("tracking active");
-    const coverage = this.collectBindingCoverage(frame);
-    this.debug.sourceCount = coverage.sourceCount;
-    this.debug.matchedSourceCount = coverage.matchedSourceCount;
-    this.debug.activeSourceCount = coverage.activeSourceCount;
-    this.debug.unresolvedSources = coverage.unresolvedSources;
+  }
+
+  updateStatusFromSummary(summary) {
+    const reason = summary?.reason || "unknown";
+    this.debug.lastReason = reason;
+    if (!summary?.hasFocus) {
+      this.debug.blendshapeCount = 0;
+      this.debug.yaw = 0;
+      this.debug.pitch = 0;
+      this.debug.roll = 0;
+      this.debug.topBlendshapes = "";
+      this.setStatus(`tracking idle (${reason})`);
+      return;
+    }
+    this.debug.blendshapeCount = Number(summary?.blendshapeCount || 0);
+    this.debug.yaw = Number(summary?.yaw || 0);
+    this.debug.pitch = Number(summary?.pitch || 0);
+    this.debug.roll = Number(summary?.roll || 0);
+    this.debug.topBlendshapes = String(summary?.topBlendshapes || "");
+    this.setStatus("tracking active");
   }
 
   configure(params, bindingJsonText = "") {
     this.params = params.map(makeParamMeta);
-    this.bindings = parseBindingSpecArray(bindingJsonText, this.params);
-    this.debug.bindingMode = bindingJsonText ? "ext" : "none";
-    this.debug.bindingCount = this.bindings.length;
+    this.bindingJsonText = String(bindingJsonText || "");
+    this.debug.bindingMode = this.bindingJsonText ? "ext" : "none";
+    this.debug.bindingCount = 0;
     this.debug.sourceCount = 0;
     this.debug.matchedSourceCount = 0;
     this.debug.activeSourceCount = 0;
     this.debug.updateCount = 0;
     this.debug.unresolvedSources = "";
-    this.setStatus(this.bindings.length > 0 ? `tracking ready (${this.bindings.length} bindings)` : "tracking ready (no bindings)");
+    this.applyEvaluatorConfig();
+    this.setStatus("tracking ready");
   }
 
   attachInputListeners() {
@@ -802,6 +747,15 @@ export class WebcamTrackingController {
     });
   }
 
+  applyEvaluatorConfig() {
+    if (!this.evaluatorWorker) return;
+    this.evaluatorWorker.postMessage({
+      type: "config",
+      params: this.params,
+      bindingJsonText: this.bindingJsonText || "",
+    });
+  }
+
   setTrackingOptions({ invertHorizontal, delegate } = {}) {
     if (typeof invertHorizontal === "boolean") {
       this.invertHorizontal = invertHorizontal;
@@ -818,8 +772,14 @@ export class WebcamTrackingController {
     if (this.started) return;
     if (!this.video) throw new Error("tracking video element is missing");
     const workerUrl = new URL("./face_tracking_worker.js", import.meta.url);
+    const evaluatorWorkerUrl = new URL("./tracking_evaluator_worker.js", import.meta.url);
     if (this.workerVersion) workerUrl.searchParams.set("v", this.workerVersion);
+    if (this.workerVersion) evaluatorWorkerUrl.searchParams.set("v", this.workerVersion);
     this.worker = new Worker(workerUrl);
+    this.evaluatorWorker = new Worker(evaluatorWorkerUrl);
+    const trackingChannel = new MessageChannel();
+    this.worker.postMessage({ type: "bind-evaluator-port" }, [trackingChannel.port1]);
+    this.evaluatorWorker.postMessage({ type: "bind-tracking-port" }, [trackingChannel.port2]);
     this.worker.onmessage = (event) => {
       const data = event?.data || {};
       if (data.type === "tracking-ready") {
@@ -833,11 +793,10 @@ export class WebcamTrackingController {
         this.actualDelegate = data.delegate === "GPU" ? "GPU" : "CPU";
         this.log(data.warning || "tracking warning");
         this.setStatus(String(data.warning || "tracking warning"));
-      } else if (data.type === "tracking") {
-        this.latestFrame = data.frame || null;
+      } else if (data.type === "tracking-status") {
         this.pendingBitmap = false;
         this.debug.frameSeq = Number(data.seq) || 0;
-        this.updateStatusFromFrame(this.latestFrame);
+        this.updateStatusFromSummary(data.status || null);
       } else if (data.type === "tracking-error") {
         this.pendingBitmap = false;
         this.setStatus(`tracking error: ${data.error || "unknown"}`);
@@ -847,7 +806,31 @@ export class WebcamTrackingController {
       this.pendingBitmap = false;
       this.setStatus(`tracking error: ${String(event?.message || "worker failed to load")}`);
     };
+    this.evaluatorWorker.onmessage = (event) => {
+      const data = event?.data || {};
+      if (data.type === "binding-ready") {
+        this.debug.bindingMode = String(data.bindingMode || this.debug.bindingMode || "none");
+        this.debug.bindingCount = Number(data.bindingCount || 0);
+        this.debug.sourceCount = Number(data.sourceCount || 0);
+        this.debug.matchedSourceCount = Number(data.matchedSourceCount || 0);
+        this.debug.activeSourceCount = Number(data.activeSourceCount || 0);
+        this.debug.unresolvedSources = String(data.unresolvedSources || "");
+      } else if (data.type === "binding-updates") {
+        this.latestUpdates = Array.isArray(data.updates) ? data.updates : [];
+        this.debug.updateCount = this.latestUpdates.length;
+        this.debug.sourceCount = Number(data.sourceCount || 0);
+        this.debug.matchedSourceCount = Number(data.matchedSourceCount || 0);
+        this.debug.activeSourceCount = Number(data.activeSourceCount || 0);
+        this.debug.unresolvedSources = String(data.unresolvedSources || "");
+      } else if (data.type === "binding-error") {
+        this.setStatus(`tracking error: ${data.error || "binding worker failed"}`);
+      }
+    };
+    this.evaluatorWorker.onerror = (event) => {
+      this.setStatus(`tracking error: ${String(event?.message || "binding worker failed to load")}`);
+    };
     this.applyWorkerConfig();
+    this.applyEvaluatorConfig();
     this.attachInputListeners();
 
     this.stream = await navigator.mediaDevices.getUserMedia({
@@ -865,6 +848,10 @@ export class WebcamTrackingController {
       this.trackReader = this.trackProcessor.readable.getReader();
       this.framePumpPromise = this.pumpTrackFrames();
     } else {
+      if (!this.usingBitmapFallback) {
+        this.usingBitmapFallback = true;
+        console.warn("[nijikan] tracking fallback: using createImageBitmap(video) on main thread");
+      }
       if (!this.video) throw new Error("tracking video element is missing");
       this.video.srcObject = this.stream;
       await this.video.play();
@@ -933,6 +920,10 @@ export class WebcamTrackingController {
       this.worker.terminate();
       this.worker = null;
     }
+    if (this.evaluatorWorker) {
+      this.evaluatorWorker.terminate();
+      this.evaluatorWorker = null;
+    }
     this.detachInputListeners();
     if (this.stream) {
       for (const track of this.stream.getTracks()) {
@@ -946,25 +937,31 @@ export class WebcamTrackingController {
     }
     this.pendingBitmap = false;
     this.started = false;
-    this.latestFrame = null;
     this.debug.lastReason = "stopped";
     this.debug.ready = false;
     this.debug.updateCount = 0;
     this.actualDelegate = this.delegate;
+    this.latestUpdates = [];
+    this.lastAppliedUpdateAt = 0;
+    this.usingBitmapFallback = false;
     this.setStatus("tracking stopped");
   }
 
-  update(dt) {
-    if (!this.started || this.bindings.length === 0) {
+  update(dt, nowMs = performance.now()) {
+    if (!this.started) {
       this.debug.updateCount = 0;
       return [];
     }
-    const context = {
-      frame: this.latestFrame,
-      timeSeconds: performance.now() / 1000.0,
-      keyState: this.keyState,
-    };
-    const updates = mergeUpdates(this.bindings.map((binding) => binding.update(context, dt)));
+    if (!this.latestUpdates.length) {
+      this.debug.updateCount = 0;
+      return [];
+    }
+    if (nowMs - this.lastAppliedUpdateAt < (1000 / 30)) {
+      return [];
+    }
+    const updates = this.latestUpdates;
+    this.latestUpdates = [];
+    this.lastAppliedUpdateAt = nowMs;
     this.debug.updateCount = updates.length;
     return updates;
   }
