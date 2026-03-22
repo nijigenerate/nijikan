@@ -703,6 +703,14 @@ export class WebcamTrackingController {
     this.debug.pitch = Number(summary?.pitch || 0);
     this.debug.roll = Number(summary?.roll || 0);
     this.debug.topBlendshapes = String(summary?.topBlendshapes || "");
+    if (this.debug.bindingMode === "none" || this.debug.bindingCount === 0) {
+      this.setStatus("tracking active (no bindings)");
+      return;
+    }
+    if (this.debug.matchedSourceCount === 0) {
+      this.setStatus("tracking active (bindings unresolved)");
+      return;
+    }
     this.setStatus("tracking active");
   }
 

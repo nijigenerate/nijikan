@@ -526,13 +526,65 @@ function parseBindingSpecArray(rawText, params) {
   if (!rawText) return [];
   let parsed;
   try {
-    parsed = JSON.parse(rawText);
+    parsed = JSON.parse(String(rawText).replace(/^\uFEFF/, "").replace(/\0+$/g, "").trim());
   } catch (_) {
     return [];
   }
   if (!Array.isArray(parsed)) return [];
   const paramByUuid = new Map(params.map((param) => [param.uuid, param]));
   return parsed.map((item) => createBindingFromSpec(item, paramByUuid)).filter(Boolean);
+}
+
+function buildFallbackSpec(param, axis, sourceName, sourceType, inRange, options = {}) {
+  return {
+    bindingType: BINDING_TYPE.RatioBinding,
+    param: param.uuid,
+    axis,
+    sourceType,
+    sourceName,
+    inRange,
+    outRange: axis === 0 ? [param.minX, param.maxX] : [param.minY, param.maxY],
+    dampenLevel: Number(options.dampenLevel ?? 4),
+    inverse: !!options.inverse,
+  };
+}
+
+function fallbackBindingsForParam(param) {
+  const name = normalizeName(param.name);
+  const out = [];
+  const push = (axis, sourceName, sourceType, inRange, options) => {
+    out.push(buildFallbackSpec(param, axis, sourceName, sourceType, inRange, options));
+  };
+
+  if (/anglex|headyaw|yaw|turn/.test(name)) push(0, "Head", SOURCE_TYPE.BoneRotYaw, [-30, 30]);
+  else if (/angley|headpitch|pitch|tiltupdown/.test(name)) push(0, "Head", SOURCE_TYPE.BoneRotPitch, [-20, 20], { inverse: true });
+  else if (/anglez|headroll|roll|tilt/.test(name)) push(0, "Head", SOURCE_TYPE.BoneRotRoll, [-25, 25]);
+  else if (/mouthopen|jawopen|aaa|openmouth/.test(name)) push(0, "MouthOpen", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/blinkleft|eyeleftclose|eyeleftblink/.test(name)) push(0, "EyeBlinkLeft", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/blinkright|eyerightclose|eyerightblink/.test(name)) push(0, "EyeBlinkRight", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/blink|eyeclose|closeeye/.test(name)) push(0, "EyeBlinkLeft", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/smileleft/.test(name)) push(0, "MouthSmileLeft", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/smileright/.test(name)) push(0, "MouthSmileRight", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/smile|happy|mouthsmile/.test(name)) push(0, "MouthSmileLeft", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/brow|eyebrow/.test(name)) push(0, "BrowInnerUp", SOURCE_TYPE.Blendshape, [0, 1], { dampenLevel: 2 });
+  else if (/gazerightx|eyerightx|lookrightx/.test(name)) push(0, "GazeRightX", SOURCE_TYPE.Blendshape, [-1, 1], { dampenLevel: 1 });
+  else if (/gazerighty|eyerighty|lookrighty/.test(name)) push(0, "GazeRightY", SOURCE_TYPE.Blendshape, [-1, 1], { dampenLevel: 1 });
+  else if (/gazeleftx|eyeleftx|lookleftx/.test(name)) push(0, "GazeLeftX", SOURCE_TYPE.Blendshape, [-1, 1], { dampenLevel: 1 });
+  else if (/gazelefty|eyelefty|looklefty/.test(name)) push(0, "GazeLeftY", SOURCE_TYPE.Blendshape, [-1, 1], { dampenLevel: 1 });
+  else if (param.isVec2 && /head|face|look|angle/.test(name)) {
+    push(0, "Head", SOURCE_TYPE.BoneRotYaw, [-30, 30]);
+    push(1, "Head", SOURCE_TYPE.BoneRotPitch, [-20, 20], { inverse: true });
+  }
+  return out;
+}
+
+function createFallbackBindings(params) {
+  const paramByUuid = new Map(params.map((param) => [param.uuid, param]));
+  const specs = [];
+  for (const param of params) {
+    specs.push(...fallbackBindingsForParam(param));
+  }
+  return specs.map((spec) => createBindingFromSpec(spec, paramByUuid)).filter(Boolean);
 }
 
 function mergeUpdates(updates) {
@@ -673,11 +725,16 @@ function handleMessage(data) {
   if (data.type === "config") {
     state.params = Array.isArray(data.params) ? data.params.map(makeParamMeta) : [];
     state.bindings = parseBindingSpecArray(String(data.bindingJsonText || ""), state.params);
+    let bindingMode = data.bindingJsonText ? "ext" : "none";
+    if (state.bindings.length === 0) {
+      state.bindings = createFallbackBindings(state.params);
+      if (state.bindings.length > 0) bindingMode = "fallback";
+    }
     state.lastTimestampMs = 0;
     const coverage = collectBindingCoverage(state.latestFrame);
     self.postMessage({
       type: "binding-ready",
-      bindingMode: data.bindingJsonText ? "ext" : "none",
+      bindingMode,
       bindingCount: state.bindings.length,
       sourceCount: coverage.sourceCount,
       matchedSourceCount: coverage.matchedSourceCount,
