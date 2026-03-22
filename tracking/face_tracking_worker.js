@@ -306,6 +306,7 @@ function buildTrackingFrame(result) {
   const quat = rotationMatrixToQuaternion(rotationMatrix);
   const euler = rotationMatrixToEulerZxy(rotationMatrix);
   euler.yaw = -euler.yaw;
+  euler.roll = -euler.roll;
   const rightGaze = getGazeRight(landmarks);
   const leftGaze = getGazeLeft(landmarks);
   const nose = landmarks[NOSE_TIP];
