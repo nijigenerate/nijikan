@@ -2,12 +2,12 @@
   "id": "/nijikan/",
   "name": "Nijikan",
   "short_name": "nijikan",
-  "start_url": "/nijikan/index.html?app=1",
+  "start_url": "/nijikan/index.html?app=1&v=wasm-index-2026-03-23-26",
   "scope": "/nijikan/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
-  "background_color": "#111111",
-  "theme_color": "#111111",
+  "background_color": "#f4f7fb",
+  "theme_color": "#f4f7fb",
   "prefer_related_applications": false,
   "icons": [
     {
