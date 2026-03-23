@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-24-30" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-24-31" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -866,7 +866,7 @@
       <button id="modelComboToggle" type="button" aria-label="toggle model options">▼</button>
       <div id="modelOptionsPopup" hidden></div>
     </div>
-    <input id="modelFileInput" type="file" accept=".inx,.inp,application/octet-stream" hidden />
+    <input id="modelFileInput" type="file" accept=".inx,.inp,.zip,application/octet-stream,application/zip,application/x-zip-compressed,*/*" hidden />
     <button id="refreshModels">refresh</button>
     <button id="start">start</button>
     <button id="stop" disabled>stop</button>
@@ -901,7 +901,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-03-24-30";
+    const WASM_TEST_VERSION = "wasm-index-2026-03-24-31";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -944,6 +944,7 @@
     const appBaseUrl = new URL("./", pageUrl);
     const launchedAsInstalledApp = pageUrl.searchParams.get("app") === "1";
     const forceOnlineModelList = pageUrl.searchParams.get("modelSource") === "online";
+    const isAndroid = /Android/i.test(navigator.userAgent || "");
     const installedStandalone = (() => {
       try {
         return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -1553,6 +1554,8 @@
               description: "nijigenerate model",
               accept: {
                 "application/octet-stream": [".inx", ".inp"],
+                "application/zip": [".inx", ".inp", ".zip"],
+                "application/x-zip-compressed": [".inx", ".inp", ".zip"],
               },
             },
           ],
@@ -1560,10 +1563,15 @@
         file = handle ? await handle.getFile() : null;
       } else {
         file = await new Promise((resolve) => {
+          const previousAccept = modelFileInput.getAttribute("accept") || "";
+          if (isAndroid) {
+            modelFileInput.setAttribute("accept", "*/*");
+          }
           const done = () => {
             modelFileInput.removeEventListener("change", done);
             const f = modelFileInput.files && modelFileInput.files[0] ? modelFileInput.files[0] : null;
             modelFileInput.value = "";
+            modelFileInput.setAttribute("accept", previousAccept);
             resolve(f);
           };
           modelFileInput.addEventListener("change", done, { once: true });
