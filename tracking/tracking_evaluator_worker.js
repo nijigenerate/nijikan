@@ -77,11 +77,12 @@ const state = {
   bindings: [],
   keyState: new Set(),
   latestFrame: null,
-  lastTimestampMs: 0,
+  lastEvalNowMs: 0,
   latestSeq: 0,
   pending: false,
-  queued: false,
   trackingPort: null,
+  tickHandle: 0,
+  tickRateHz: 60,
   fps: {
     startMs: 0,
     count: 0,
@@ -114,7 +115,10 @@ function clamp(value, min, max) {
 
 function dampen(value, target, dt, speed = 1) {
   if (!(dt > 0)) return target;
-  let alpha = 1.0 - Math.pow(0.5, dt * speed * 60.0);
+  // Previous formula:
+  // let alpha = 1.0 - Math.pow(0.5, dt * speed * 60.0);
+  // It converged too aggressively at 60fps, so use a smoother exponential decay.
+  let alpha = 1.0 - Math.exp(-dt * Math.max(0, speed) * 3.0);
   alpha = clamp(alpha, 0, 1);
   return value + (target - value) * alpha;
 }
@@ -688,31 +692,27 @@ function collectBindingCoverage(frame) {
   };
 }
 
-function evaluateLatestFrame() {
-  if (state.pending) {
-    state.queued = true;
-    return;
-  }
+function evaluateLatestFrame(nowMs = performance.now()) {
+  if (state.pending) return;
   state.pending = true;
   queueMicrotask(() => {
     try {
       const frame = state.latestFrame;
-      const dt = state.lastTimestampMs > 0 && Number.isFinite(frame?.timestampMs)
-        ? Math.max(0, (frame.timestampMs - state.lastTimestampMs) / 1000.0)
-        : 1 / 60;
-      if (Number.isFinite(frame?.timestampMs)) {
-        state.lastTimestampMs = frame.timestampMs;
-      }
+      const evalNowMs = Number(nowMs) || performance.now();
+      const dt = state.lastEvalNowMs > 0
+        ? Math.max(0, (evalNowMs - state.lastEvalNowMs) / 1000.0)
+        : 1 / state.tickRateHz;
+      state.lastEvalNowMs = evalNowMs;
       const context = {
         frame,
-        timeSeconds: (Number.isFinite(frame?.timestampMs) ? frame.timestampMs : performance.now()) / 1000.0,
+        timeSeconds: evalNowMs / 1000.0,
         keyState: state.keyState,
       };
       const updates = frame
         ? mergeUpdates(state.bindings.map((binding) => binding.update(context, dt)))
         : [];
       const coverage = collectBindingCoverage(frame);
-      const evaluatorFps = recordFpsSample(state.fps, frame?.timestampMs);
+      const evaluatorFps = recordFpsSample(state.fps, evalNowMs);
       self.postMessage({
         type: "binding-updates",
         seq: state.latestSeq,
@@ -727,12 +727,15 @@ function evaluateLatestFrame() {
       self.postMessage({ type: "binding-error", error: String(error && error.message ? error.message : error) });
     } finally {
       state.pending = false;
-      if (state.queued) {
-        state.queued = false;
-        evaluateLatestFrame();
-      }
     }
   });
+}
+
+function ensureTickLoop() {
+  if (state.tickHandle) return;
+  state.tickHandle = self.setInterval(() => {
+    evaluateLatestFrame(performance.now());
+  }, 1000 / state.tickRateHz);
 }
 
 function handleMessage(data) {
@@ -742,7 +745,6 @@ function handleMessage(data) {
       timestampMs: Number(data.timestampMs) || performance.now(),
     };
     state.latestSeq = Number(data.seq) || 0;
-    evaluateLatestFrame();
     return;
   }
   if (data.type === "config") {
@@ -753,7 +755,7 @@ function handleMessage(data) {
       state.bindings = createFallbackBindings(state.params);
       if (state.bindings.length > 0) bindingMode = "fallback";
     }
-    state.lastTimestampMs = 0;
+    state.lastEvalNowMs = 0;
     const coverage = collectBindingCoverage(state.latestFrame);
     self.postMessage({
       type: "binding-ready",
@@ -780,6 +782,8 @@ function handleMessage(data) {
     return;
   }
 }
+
+ensureTickLoop();
 
 self.onmessage = (event) => {
   const data = event?.data || {};

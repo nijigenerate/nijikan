@@ -70,7 +70,10 @@ function clamp(value, min, max) {
 
 function dampen(value, target, dt, speed = 1) {
   if (!(dt > 0)) return target;
-  let alpha = 1.0 - Math.pow(0.5, dt * speed * 60.0);
+  // Previous formula:
+  // let alpha = 1.0 - Math.pow(0.5, dt * speed * 60.0);
+  // It converged too aggressively at 60fps, so use a smoother exponential decay.
+  let alpha = 1.0 - Math.exp(-dt * Math.max(0, speed) * 3.0);
   alpha = clamp(alpha, 0, 1);
   return value + (target - value) * alpha;
 }
