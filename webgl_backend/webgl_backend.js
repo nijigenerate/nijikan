@@ -708,6 +708,8 @@ void main() {
     this.sceneTargetWidth = w;
     this.sceneTargetHeight = h;
     this.rebindActiveTargets();
+    this._validateFramebufferComplete(this.fBuffer, "scene");
+    this._validateFramebufferComplete(this.cfBuffer, "composite");
   }
 
   rebindActiveTargets() {
@@ -728,6 +730,18 @@ void main() {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.TEXTURE_2D, this.cfStencil, 0);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+  }
+
+  _validateFramebufferComplete(framebuffer, label = "framebuffer") {
+    const gl = this.gl;
+    if (!framebuffer) return;
+    const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error(`WebGL ${label} framebuffer incomplete: ${status}`);
+    }
   }
 
   beginScene() {
@@ -754,8 +768,6 @@ void main() {
     gl.clearColor(0, 0, 0, 0);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fBuffer);
-    gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    gl.getError();
     this.setDrawBuffersSafe(1);
     gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);

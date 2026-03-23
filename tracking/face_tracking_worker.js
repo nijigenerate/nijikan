@@ -46,6 +46,11 @@ const state = {
   taskCanvas: null,
   taskGl: null,
   evaluatorPort: null,
+  fps: {
+    startMs: 0,
+    count: 0,
+    value: 0,
+  },
   config: {
     runningMode: "VIDEO",
     wasmPath: `${APP_BASE_PATH}vendor/package/wasm`,
@@ -56,6 +61,22 @@ const state = {
     invertHorizontal: false,
   },
 };
+
+function recordFpsSample(meter, nowMs) {
+  const now = Number(nowMs) || performance.now();
+  if (!(meter.startMs > 0)) {
+    meter.startMs = now;
+    meter.count = 0;
+  }
+  meter.count += 1;
+  const elapsed = now - meter.startMs;
+  if (elapsed >= 1000) {
+    meter.value = (meter.count * 1000) / elapsed;
+    meter.startMs = now;
+    meter.count = 0;
+  }
+  return meter.value;
+}
 
 function collectTopBlendshapes(frame, limit = 5) {
   const entries = Object.entries(frame?.blendshapes || {})
@@ -415,6 +436,7 @@ self.onmessage = async (event) => {
     const frame = buildTrackingFrame(result);
     const seq = Number(data.seq) || 0;
     const timestampMs = Number(data.timestampMs) || performance.now();
+    const workerFps = recordFpsSample(state.fps, timestampMs);
     state.evaluatorPort?.postMessage({
       type: "frame",
       seq,
@@ -425,6 +447,7 @@ self.onmessage = async (event) => {
       type: "tracking-status",
       seq,
       timestampMs,
+      workerFps,
       status: buildTrackingStatus(frame),
     });
   } catch (error) {

@@ -592,8 +592,9 @@ export class WebcamTrackingController {
     this.frameScheduler = null;
     this.startWatchdog = 0;
     this.lastVideoTime = -1;
+    this.maxTrackingFps = 60;
+    this.lastSubmittedFrameAt = 0;
     this.latestUpdates = [];
-    this.lastAppliedUpdateAt = 0;
     this.usingBitmapFallback = false;
     this.keyState = new Set();
     this.keyDownHandler = (event) => {
@@ -632,6 +633,8 @@ export class WebcamTrackingController {
       updateCount: 0,
       topBlendshapes: "",
       unresolvedSources: "",
+      workerFps: 0,
+      evaluatorFps: 0,
     };
     this.appBasePath = new URL("../", import.meta.url).pathname;
   }
@@ -653,6 +656,13 @@ export class WebcamTrackingController {
 
   getActualDelegate() {
     return this.actualDelegate;
+  }
+
+  getFpsCounters() {
+    return {
+      trackingWorker: Number(this.debug.workerFps || 0),
+      evaluatorWorker: Number(this.debug.evaluatorFps || 0),
+    };
   }
 
   collectTopBlendshapes(frame, limit = 5) {
@@ -724,6 +734,8 @@ export class WebcamTrackingController {
     this.debug.activeSourceCount = 0;
     this.debug.updateCount = 0;
     this.debug.unresolvedSources = "";
+    this.debug.workerFps = 0;
+    this.debug.evaluatorFps = 0;
     this.applyEvaluatorConfig();
     this.setStatus("tracking ready");
   }
@@ -804,6 +816,7 @@ export class WebcamTrackingController {
       } else if (data.type === "tracking-status") {
         this.pendingBitmap = false;
         this.debug.frameSeq = Number(data.seq) || 0;
+        this.debug.workerFps = Number(data.workerFps || 0);
         this.updateStatusFromSummary(data.status || null);
       } else if (data.type === "tracking-error") {
         this.pendingBitmap = false;
@@ -826,6 +839,7 @@ export class WebcamTrackingController {
       } else if (data.type === "binding-updates") {
         this.latestUpdates = Array.isArray(data.updates) ? data.updates : [];
         this.debug.updateCount = this.latestUpdates.length;
+        this.debug.evaluatorFps = Number(data.evaluatorFps || 0);
         this.debug.sourceCount = Number(data.sourceCount || 0);
         this.debug.matchedSourceCount = Number(data.matchedSourceCount || 0);
         this.debug.activeSourceCount = Number(data.activeSourceCount || 0);
@@ -874,8 +888,13 @@ export class WebcamTrackingController {
             }
             this.lastVideoTime = this.video.currentTime;
             const nowMs = performance.now();
+            if (this.lastSubmittedFrameAt > 0 && (nowMs - this.lastSubmittedFrameAt) < (1000 / this.maxTrackingFps)) {
+              this.videoFrameHandle = this.frameScheduler.schedule(this.frameCallback);
+              return;
+            }
             const bitmap = await createImageBitmap(this.video);
             this.pendingBitmap = true;
+            this.lastSubmittedFrameAt = nowMs;
             this.worker.postMessage({
               type: "frame",
               seq: ++this.seq,
@@ -948,9 +967,11 @@ export class WebcamTrackingController {
     this.debug.lastReason = "stopped";
     this.debug.ready = false;
     this.debug.updateCount = 0;
+    this.debug.workerFps = 0;
+    this.debug.evaluatorFps = 0;
     this.actualDelegate = this.delegate;
     this.latestUpdates = [];
-    this.lastAppliedUpdateAt = 0;
+    this.lastSubmittedFrameAt = 0;
     this.usingBitmapFallback = false;
     this.setStatus("tracking stopped");
   }
@@ -964,12 +985,8 @@ export class WebcamTrackingController {
       this.debug.updateCount = 0;
       return [];
     }
-    if (nowMs - this.lastAppliedUpdateAt < (1000 / 30)) {
-      return [];
-    }
     const updates = this.latestUpdates;
     this.latestUpdates = [];
-    this.lastAppliedUpdateAt = nowMs;
     this.debug.updateCount = updates.length;
     return updates;
   }
@@ -987,11 +1004,16 @@ export class WebcamTrackingController {
       if (!frame) continue;
       const timestampUs = Number(frame.timestamp);
       const timestampMs = Number.isFinite(timestampUs) ? (timestampUs / 1000.0) : performance.now();
+      if (this.lastSubmittedFrameAt > 0 && (timestampMs - this.lastSubmittedFrameAt) < (1000 / this.maxTrackingFps)) {
+        try { frame.close?.(); } catch (_) {}
+        continue;
+      }
       if (this.pendingBitmap) {
         try { frame.close?.(); } catch (_) {}
         continue;
       }
       this.pendingBitmap = true;
+      this.lastSubmittedFrameAt = timestampMs;
       try {
         this.worker.postMessage({
           type: "frame",

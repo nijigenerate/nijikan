@@ -82,7 +82,28 @@ const state = {
   pending: false,
   queued: false,
   trackingPort: null,
+  fps: {
+    startMs: 0,
+    count: 0,
+    value: 0,
+  },
 };
+
+function recordFpsSample(meter, nowMs) {
+  const now = Number(nowMs) || performance.now();
+  if (!(meter.startMs > 0)) {
+    meter.startMs = now;
+    meter.count = 0;
+  }
+  meter.count += 1;
+  const elapsed = now - meter.startMs;
+  if (elapsed >= 1000) {
+    meter.value = (meter.count * 1000) / elapsed;
+    meter.startMs = now;
+    meter.count = 0;
+  }
+  return meter.value;
+}
 
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
@@ -691,10 +712,12 @@ function evaluateLatestFrame() {
         ? mergeUpdates(state.bindings.map((binding) => binding.update(context, dt)))
         : [];
       const coverage = collectBindingCoverage(frame);
+      const evaluatorFps = recordFpsSample(state.fps, frame?.timestampMs);
       self.postMessage({
         type: "binding-updates",
         seq: state.latestSeq,
         updates,
+        evaluatorFps,
         sourceCount: coverage.sourceCount,
         matchedSourceCount: coverage.matchedSourceCount,
         activeSourceCount: coverage.activeSourceCount,

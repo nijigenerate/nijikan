@@ -1,4 +1,4 @@
-const CACHE_NAME = "nijikan-static-v9";
+const CACHE_NAME = "nijikan-static-v10";
 const APP_BASE_PATH = new URL("./", self.registration.scope).pathname;
 const withBase = (path) => new URL(path, self.registration.scope).pathname;
 const PRECACHE_URLS = [

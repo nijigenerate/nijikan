@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-23-28" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-23-29" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -277,6 +277,46 @@
       display: flex;
       flex-direction: column;
       gap: 14px;
+    }
+    #fpsCounterBar {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 18px);
+      right: calc(env(safe-area-inset-right, 0px) + 18px);
+      z-index: 32;
+      display: none;
+      min-width: 200px;
+      padding: 10px 12px;
+      border-radius: 13px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(30, 41, 59, 0.08);
+      box-shadow: 0 18px 48px rgba(37, 53, 81, 0.12);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      color: var(--text);
+      pointer-events: none;
+    }
+    #fpsCounterBar.is-visible {
+      display: block;
+    }
+    .fpsCounterRow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .fpsCounterRow + .fpsCounterRow {
+      margin-top: 6px;
+    }
+    .fpsCounterLabel {
+      color: var(--text-dim);
+    }
+    .fpsCounterValue {
+      min-width: 56px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
     }
     .overlayCard {
       padding: 14px;
@@ -861,7 +901,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-03-23-28";
+    const WASM_TEST_VERSION = "wasm-index-2026-03-23-29";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -914,6 +954,13 @@
     const preferLocalModelFileMode = (installedStandalone || launchedAsInstalledApp) && !forceOnlineModelList;
     let trackingSwitchInput = null;
     let trackingModeEl = null;
+    let showFpsCountersInput = null;
+    let fpsCounterBar = null;
+    let fpsCounterMainEl = null;
+    let fpsCounterTrackingEl = null;
+    let fpsCounterEvaluatorEl = null;
+    let showFpsCounters = false;
+    const mainFpsMeter = { startMs: 0, count: 0, value: 0 };
     const NAV_FADE_DELAY_MS = 2600;
     const overlayMeta = {
       models: {
@@ -954,6 +1001,26 @@
       card.appendChild(heading);
       appendChildren(card, children);
       return card;
+    }
+
+    function recordFpsSample(meter, nowMs) {
+      const now = Number(nowMs) || performance.now();
+      if (!(meter.startMs > 0)) {
+        meter.startMs = now;
+        meter.count = 0;
+      }
+      meter.count += 1;
+      const elapsed = now - meter.startMs;
+      if (elapsed >= 1000) {
+        meter.value = (meter.count * 1000) / elapsed;
+        meter.startMs = now;
+        meter.count = 0;
+      }
+      return meter.value;
+    }
+
+    function formatFps(value) {
+      return Number.isFinite(value) && value > 0 ? `${value.toFixed(1)} fps` : "--";
     }
 
     function buildOverlayUi() {
@@ -1114,11 +1181,49 @@
       appendChildren(bgCardContent, [bgLabel, bgColorInput]);
       viewStack.appendChild(createOverlayCard("Background", [bgCardContent]));
 
+      const diagnosticsCardContent = document.createElement("div");
+      diagnosticsCardContent.className = "controlGrid";
+      const showFpsLabel = document.createElement("label");
+      showFpsLabel.className = "switchField";
+      showFpsCountersInput = document.createElement("input");
+      showFpsCountersInput.type = "checkbox";
+      const showFpsTrack = document.createElement("span");
+      showFpsTrack.className = "switchTrack";
+      const showFpsText = document.createElement("span");
+      showFpsText.className = "switchText";
+      showFpsText.textContent = "Show FPS counters";
+      showFpsLabel.appendChild(showFpsCountersInput);
+      showFpsLabel.appendChild(showFpsTrack);
+      showFpsLabel.appendChild(showFpsText);
+      diagnosticsCardContent.appendChild(showFpsLabel);
+      viewStack.appendChild(createOverlayCard("Diagnostics", [diagnosticsCardContent]));
+
+      fpsCounterBar = document.createElement("div");
+      fpsCounterBar.id = "fpsCounterBar";
+      const makeFpsRow = (labelText) => {
+        const row = document.createElement("div");
+        row.className = "fpsCounterRow";
+        const label = document.createElement("span");
+        label.className = "fpsCounterLabel";
+        label.textContent = labelText;
+        const value = document.createElement("span");
+        value.className = "fpsCounterValue";
+        value.textContent = "--";
+        row.appendChild(label);
+        row.appendChild(value);
+        fpsCounterBar.appendChild(row);
+        return value;
+      };
+      fpsCounterMainEl = makeFpsRow("Main");
+      fpsCounterTrackingEl = makeFpsRow("Tracking worker");
+      fpsCounterEvaluatorEl = makeFpsRow("Evaluator worker");
+
       overlayPanel.appendChild(overlayHeader);
       overlayPanel.appendChild(overlayBody);
 
       appShell.appendChild(stage);
       appShell.appendChild(navRail);
+      appShell.appendChild(fpsCounterBar);
       appShell.appendChild(overlayBackdrop);
       appShell.appendChild(overlayPanel);
 
@@ -1240,6 +1345,17 @@
         const mode = trackingController?.getActualDelegate?.() || "CPU";
         trackingModeEl.textContent = trackingEnabled ? `Mode: ${mode}` : "Mode: off";
       }
+    }
+
+    function refreshFpsCounterBar(nowMs = performance.now()) {
+      if (!fpsCounterBar) return;
+      fpsCounterBar.classList.toggle("is-visible", !!showFpsCounters);
+      if (!showFpsCounters) return;
+      const mainFps = recordFpsSample(mainFpsMeter, nowMs);
+      const workerFps = trackingController?.getFpsCounters?.() || {};
+      if (fpsCounterMainEl) fpsCounterMainEl.textContent = formatFps(mainFps);
+      if (fpsCounterTrackingEl) fpsCounterTrackingEl.textContent = formatFps(Number(workerFps.trackingWorker || 0));
+      if (fpsCounterEvaluatorEl) fpsCounterEvaluatorEl.textContent = formatFps(Number(workerFps.evaluatorWorker || 0));
     }
 
     function isCompactHorizontalNav() {
@@ -2022,6 +2138,7 @@
       function frame(now) {
         if (!alive || !running) return;
         try {
+          refreshFpsCounterBar(now);
           resizeCanvas();
 
           const dt = Math.min(0.05, Math.max(0.0, (now - last) / 1000.0));
@@ -2209,6 +2326,10 @@
       if (trackingSwitchInput.checked === trackingEnabled) return;
       trackingToggleBtn.click();
     });
+    showFpsCountersInput?.addEventListener("change", () => {
+      showFpsCounters = !!showFpsCountersInput.checked;
+      refreshFpsCounterBar();
+    });
     menuToggleBtn.addEventListener("click", () => {
       wakeNavigation();
       if (isCompactHorizontalNav()) return;
@@ -2310,6 +2431,7 @@
     updateLayoutMetrics();
     syncOverlayUi();
     refreshTrackingUi();
+    refreshFpsCounterBar();
     wakeNavigation();
     const initModelList = await refreshModelListUI();
     if (initModelList?.source === "manifest" && (initModelList.count | 0) >= 2) {
