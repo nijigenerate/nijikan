@@ -6,25 +6,18 @@ function getAppBasePath() {
 }
 
 const APP_BASE_PATH = getAppBasePath();
+const TRACKING_DEBUG_LOGS = false;
 
 async function ensureTasksVisionLoaded() {
   if (self.__mediapipeTasksVision) return self.__mediapipeTasksVision;
-  self.exports = self.exports || {};
-  self.module = self.module || { exports: self.exports };
-  const bundleUrl = `${APP_BASE_PATH}vendor/package/vision_bundle.cjs`;
-  const response = await fetch(bundleUrl, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`failed to fetch tasks vision bundle: ${response.status}`);
+  if (!self.__mediapipeTasksVisionPromise) {
+    const bundleUrl = `${APP_BASE_PATH}vendor/package/vision_bundle.mjs`;
+    self.__mediapipeTasksVisionPromise = import(bundleUrl).then((mod) => {
+      self.__mediapipeTasksVision = mod;
+      return mod;
+    });
   }
-  const source = await response.text();
-  const blobUrl = URL.createObjectURL(new Blob([source], { type: "application/javascript" }));
-  try {
-    importScripts(blobUrl);
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
-  self.__mediapipeTasksVision = self.module?.exports || self.exports;
-  return self.__mediapipeTasksVision;
+  return self.__mediapipeTasksVisionPromise;
 }
 
 const LEFT_EYE_OUTER = 33;
@@ -45,6 +38,7 @@ const state = {
   faceLandmarker: null,
   taskCanvas: null,
   taskGl: null,
+  taskGlInfo: null,
   evaluatorPort: null,
   fps: {
     startMs: 0,
@@ -61,6 +55,54 @@ const state = {
     invertHorizontal: false,
   },
 };
+
+function logTrackingDebug(message, extra = null) {
+  if (!TRACKING_DEBUG_LOGS) return;
+  const payload = {
+    type: "tracking-debug",
+    message: String(message || ""),
+    extra: extra ?? null,
+  };
+  try {
+    self.postMessage(payload);
+  } catch (_) {}
+  if (extra !== null && extra !== undefined) {
+    // eslint-disable-next-line no-console
+    console.log(`[nijikan][tracking-worker] ${message}`, extra);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`[nijikan][tracking-worker] ${message}`);
+  }
+}
+
+function getTaskGlInfo(gl) {
+  if (!gl) return null;
+  let debugInfo = null;
+  try {
+    debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+  } catch (_) {}
+  let renderer = "";
+  let vendor = "";
+  try {
+    renderer = String(
+      debugInfo
+        ? (gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "")
+        : (gl.getParameter(gl.RENDERER) || ""),
+    );
+  } catch (_) {}
+  try {
+    vendor = String(
+      debugInfo
+        ? (gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || "")
+        : (gl.getParameter(gl.VENDOR) || ""),
+    );
+  } catch (_) {}
+  let version = "";
+  try {
+    version = String(gl.getParameter(gl.VERSION) || "");
+  } catch (_) {}
+  return { renderer, vendor, version };
+}
 
 function recordFpsSample(meter, nowMs) {
   const now = Number(nowMs) || performance.now();
@@ -130,6 +172,8 @@ function ensureTaskCanvas(width, height, delegate) {
   if (!state.taskCanvas || state.taskCanvas.width !== safeWidth || state.taskCanvas.height !== safeHeight) {
     state.taskCanvas = new OffscreenCanvas(safeWidth, safeHeight);
     state.taskGl = null;
+    state.taskGlInfo = null;
+    logTrackingDebug("created OffscreenCanvas for GPU delegate", { width: safeWidth, height: safeHeight });
   }
   if (!state.taskGl) {
     state.taskGl = state.taskCanvas.getContext("webgl2", {
@@ -140,6 +184,11 @@ function ensureTaskCanvas(width, height, delegate) {
       premultipliedAlpha: false,
       preserveDrawingBuffer: false,
     });
+    state.taskGlInfo = getTaskGlInfo(state.taskGl);
+    logTrackingDebug("requested worker WebGL2 context", {
+      ok: !!state.taskGl,
+      glInfo: state.taskGlInfo,
+    });
   }
   if (!state.taskGl) {
     state.taskCanvas = null;
@@ -149,9 +198,15 @@ function ensureTaskCanvas(width, height, delegate) {
 
 function downgradeToCpuDelegate(reason) {
   if (state.config.delegate !== "GPU") return false;
+  logTrackingDebug("downgrading GPU delegate to CPU", {
+    reason,
+    glInfo: state.taskGlInfo,
+    canvas: state.taskCanvas ? { width: state.taskCanvas.width, height: state.taskCanvas.height } : null,
+  });
   closeFaceLandmarker();
   state.taskCanvas = null;
   state.taskGl = null;
+  state.taskGlInfo = null;
   state.config = {
     ...state.config,
     delegate: "CPU",
@@ -361,6 +416,11 @@ function buildTrackingFrame(result) {
 async function ensureFaceLandmarker() {
   if (state.faceLandmarker) return state.faceLandmarker;
   const { FaceLandmarker, FilesetResolver } = await ensureTasksVisionLoaded();
+  logTrackingDebug("loaded tasks vision module", {
+    delegate: state.config.delegate,
+    wasmPath: state.config.wasmPath,
+    modelAssetPath: state.config.modelAssetPath,
+  });
   const vision = await FilesetResolver.forVisionTasks(state.config.wasmPath);
   for (;;) {
     const options = {
@@ -378,11 +438,28 @@ async function ensureFaceLandmarker() {
       }
       options.canvas = state.taskCanvas;
     }
+    logTrackingDebug("creating FaceLandmarker", {
+      delegate: state.config.delegate,
+      runningMode: options.runningMode,
+      numFaces: options.numFaces,
+      hasCanvas: !!options.canvas,
+      glInfo: state.taskGlInfo,
+    });
     try {
       state.faceLandmarker = await FaceLandmarker.createFromOptions(vision, options);
+      logTrackingDebug("FaceLandmarker.createFromOptions succeeded", {
+        delegate: state.config.delegate,
+        glInfo: state.taskGlInfo,
+      });
       return state.faceLandmarker;
     } catch (error) {
       const message = String(error && error.message ? error.message : error);
+      logTrackingDebug("FaceLandmarker.createFromOptions failed", {
+        delegate: state.config.delegate,
+        message,
+        error,
+        glInfo: state.taskGlInfo,
+      });
       if (!downgradeToCpuDelegate(message)) {
         throw error;
       }

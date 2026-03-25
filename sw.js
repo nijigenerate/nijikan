@@ -1,4 +1,4 @@
-const CACHE_NAME = "nijikan-static-v12";
+const CACHE_NAME = "nijikan-static-v14";
 const APP_BASE_PATH = new URL("./", self.registration.scope).pathname;
 const withBase = (path) => new URL(path, self.registration.scope).pathname;
 const PRECACHE_URLS = [
@@ -15,7 +15,7 @@ const PRECACHE_URLS = [
   withBase("./tracking/face_tracking_worker.js"),
   withBase("./tracking/tracking_evaluator_worker.js"),
   withBase("./tracking/face_landmarker_v2_with_blendshapes.task"),
-  withBase("./vendor/package/vision_bundle.cjs"),
+  withBase("./vendor/package/vision_bundle.mjs"),
   withBase("./vendor/package/wasm/vision_wasm_internal.js"),
   withBase("./vendor/package/wasm/vision_wasm_internal.wasm"),
   withBase("./vendor/package/wasm/vision_wasm_module_internal.js"),

@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-24-31" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-26-33" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
-  <title>nicxlive wasm webgl test</title>
+  <title>nijikan web player</title>
   <style>
     :root {
       --bg: #f4f7fb;
@@ -866,7 +866,7 @@
       <button id="modelComboToggle" type="button" aria-label="toggle model options">▼</button>
       <div id="modelOptionsPopup" hidden></div>
     </div>
-    <input id="modelFileInput" type="file" accept=".inx,.inp,.zip,application/octet-stream,application/zip,application/x-zip-compressed,*/*" hidden />
+    <input id="modelFileInput" type="file" accept=".inx,.inp" hidden />
     <button id="refreshModels">refresh</button>
     <button id="start">start</button>
     <button id="stop" disabled>stop</button>
@@ -901,7 +901,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-03-24-31";
+    const WASM_TEST_VERSION = "wasm-index-2026-03-26-33";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -1469,6 +1469,7 @@
           video: trackingVideo,
           statusEl: trackingStatusEl,
           log,
+          delegate: "GPU",
           flipX: true,
           invertHorizontal: !!trackingInvertHorizontalInput?.checked,
           workerVersion: WASM_TEST_VERSION,
@@ -1543,9 +1544,14 @@
       if (local) closeModelOptions();
     }
 
+    function isSupportedLocalModelFile(file) {
+      const name = String(file?.name || "").trim().toLowerCase();
+      return name.endsWith(".inx") || name.endsWith(".inp");
+    }
+
     async function chooseLocalModelFile() {
       let file = null;
-      if (window.showOpenFilePicker && window.isSecureContext) {
+      if (!isAndroid && window.showOpenFilePicker && window.isSecureContext) {
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
           excludeAcceptAllOption: false,
@@ -1554,8 +1560,6 @@
               description: "nijigenerate model",
               accept: {
                 "application/octet-stream": [".inx", ".inp"],
-                "application/zip": [".inx", ".inp", ".zip"],
-                "application/x-zip-compressed": [".inx", ".inp", ".zip"],
               },
             },
           ],
@@ -1563,15 +1567,16 @@
         file = handle ? await handle.getFile() : null;
       } else {
         file = await new Promise((resolve) => {
-          const previousAccept = modelFileInput.getAttribute("accept") || "";
+          const previousAccept = modelFileInput.getAttribute("accept");
           if (isAndroid) {
-            modelFileInput.setAttribute("accept", "*/*");
+            modelFileInput.removeAttribute("accept");
           }
           const done = () => {
             modelFileInput.removeEventListener("change", done);
             const f = modelFileInput.files && modelFileInput.files[0] ? modelFileInput.files[0] : null;
             modelFileInput.value = "";
-            modelFileInput.setAttribute("accept", previousAccept);
+            if (previousAccept == null) modelFileInput.removeAttribute("accept");
+            else modelFileInput.setAttribute("accept", previousAccept);
             resolve(f);
           };
           modelFileInput.addEventListener("change", done, { once: true });
@@ -1579,6 +1584,11 @@
         });
       }
       if (!file) return null;
+      if (!isSupportedLocalModelFile(file)) {
+        log("WARN", `unsupported model file: ${String(file.name || "(unknown)")}`);
+        alert("Please select a .inx or .inp model file.");
+        return null;
+      }
       selectedLocalModelFile = file;
       selectedLocalModelName = String(file.name || "model.inx");
       modelCombo.value = selectedLocalModelName;
