@@ -657,6 +657,10 @@ export class WebcamTrackingController {
     });
   }
 
+  getRequestedDelegate() {
+    return this.delegate;
+  }
+
   getActualDelegate() {
     return this.actualDelegate;
   }
@@ -814,6 +818,7 @@ export class WebcamTrackingController {
         }
       } else if (data.type === "tracking-warning") {
         this.actualDelegate = data.delegate === "GPU" ? "GPU" : "CPU";
+        this.delegate = this.actualDelegate;
         this.log(data.warning || "tracking warning");
         this.setStatus(String(data.warning || "tracking warning"));
       } else if (data.type === "tracking-status") {

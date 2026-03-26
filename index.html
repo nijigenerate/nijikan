@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-26-33" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-26-34" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -371,6 +371,32 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+    }
+    .delegateChoice {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid rgba(30, 41, 59, 0.1);
+    }
+    .delegateChoice button {
+      min-width: 58px;
+      min-height: 32px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+    }
+    .delegateChoice button.is-active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .delegateChoice button:disabled {
+      opacity: 0.45;
+      cursor: default;
     }
     .switchField {
       display: inline-flex;
@@ -901,7 +927,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-03-26-33";
+    const WASM_TEST_VERSION = "wasm-index-2026-03-26-34";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -954,7 +980,8 @@
     })();
     const preferLocalModelFileMode = (installedStandalone || launchedAsInstalledApp) && !forceOnlineModelList;
     let trackingSwitchInput = null;
-    let trackingModeEl = null;
+    let trackingDelegateCpuBtn = null;
+    let trackingDelegateGpuBtn = null;
     let showFpsCountersInput = null;
     let fpsCounterBar = null;
     let fpsCounterMainEl = null;
@@ -1142,11 +1169,18 @@
       trackingSwitchLabel.appendChild(trackingSwitchInput);
       trackingSwitchLabel.appendChild(trackingSwitchTrack);
       trackingSwitchLabel.appendChild(trackingSwitchText);
-      trackingModeEl = document.createElement("div");
-      trackingModeEl.className = "metaLine";
-      trackingModeEl.textContent = "Mode: off";
+      const trackingDelegateChoice = document.createElement("div");
+      trackingDelegateChoice.className = "delegateChoice";
+      trackingDelegateCpuBtn = document.createElement("button");
+      trackingDelegateCpuBtn.type = "button";
+      trackingDelegateCpuBtn.textContent = "CPU";
+      trackingDelegateGpuBtn = document.createElement("button");
+      trackingDelegateGpuBtn.type = "button";
+      trackingDelegateGpuBtn.textContent = "GPU";
+      trackingDelegateChoice.appendChild(trackingDelegateCpuBtn);
+      trackingDelegateChoice.appendChild(trackingDelegateGpuBtn);
       trackingActionRow.appendChild(trackingSwitchLabel);
-      trackingActionRow.appendChild(trackingModeEl);
+      trackingActionRow.appendChild(trackingDelegateChoice);
       trackingToggleBtn.classList.add("trackingHiddenButton");
       trackingStatusEl.classList.add("statusLine");
       const trackingFlipLabel = document.createElement("label");
@@ -1342,9 +1376,16 @@
         trackingSwitchInput.checked = trackingEnabled;
         trackingSwitchInput.disabled = !!trackingToggleBtn.disabled;
       }
-      if (trackingModeEl) {
-        const mode = trackingController?.getActualDelegate?.() || "CPU";
-        trackingModeEl.textContent = trackingEnabled ? `Mode: ${mode}` : "Mode: off";
+      const requested = trackingController?.getRequestedDelegate?.() || "GPU";
+      const actual = trackingController?.getActualDelegate?.() || requested;
+      const selected = trackingEnabled ? actual : requested;
+      if (trackingDelegateCpuBtn) {
+        trackingDelegateCpuBtn.classList.toggle("is-active", selected === "CPU");
+        trackingDelegateCpuBtn.disabled = !!trackingToggleBtn.disabled;
+      }
+      if (trackingDelegateGpuBtn) {
+        trackingDelegateGpuBtn.classList.toggle("is-active", selected === "GPU");
+        trackingDelegateGpuBtn.disabled = !!trackingToggleBtn.disabled;
       }
     }
 
@@ -2343,6 +2384,16 @@
     trackingSwitchInput?.addEventListener("change", () => {
       if (trackingSwitchInput.checked === trackingEnabled) return;
       trackingToggleBtn.click();
+    });
+    trackingDelegateCpuBtn?.addEventListener("click", () => {
+      wakeNavigation();
+      trackingController?.setTrackingOptions({ delegate: "CPU" });
+      refreshTrackingUi();
+    });
+    trackingDelegateGpuBtn?.addEventListener("click", () => {
+      wakeNavigation();
+      trackingController?.setTrackingOptions({ delegate: "GPU" });
+      refreshTrackingUi();
     });
     showFpsCountersInput?.addEventListener("change", () => {
       showFpsCounters = !!showFpsCountersInput.checked;
