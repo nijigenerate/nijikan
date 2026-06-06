@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-03-26-34" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-06-06-36" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -927,7 +927,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-03-26-34";
+    const WASM_TEST_VERSION = "wasm-index-2026-06-06-36";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -1504,6 +1504,51 @@
       return text;
     }
 
+    function readPuppetParameters(apis, codec, puppet) {
+      const queryAvailable = !!apis?.fnQuery;
+      const legacyAvailable = !!apis?.fnGetParameters;
+      if (!queryAvailable && !legacyAvailable) {
+        return { result: codec.layout.Failure, params: [] };
+      }
+
+      const outCountPtr = codec.getMalloc()(codec.layout.OutPtr);
+      try {
+        Module.HEAPU32[outCountPtr >>> 2] = 0;
+        const countResult = queryAvailable
+          ? apis.fnQuery(puppet, codec.layout.QueryParameters, 0, codec.layout.SizeNjgParameterInfo, 0, outCountPtr)
+          : apis.fnGetParameters(puppet, 0, 0, outCountPtr);
+        if (countResult !== codec.layout.Ok) {
+          return { result: countResult, params: [] };
+        }
+
+        const count = readU32(outCountPtr);
+        if (count === 0) return { result: codec.layout.Ok, params: [] };
+
+        const stride = queryAvailable ? codec.layout.SizeNjgParameterInfo : codec.layout.LegacySizeNjgParameterInfo;
+        const infoPtr = codec.getMalloc()(count * stride);
+        try {
+          Module.HEAPU32[outCountPtr >>> 2] = 0;
+          const listResult = queryAvailable
+            ? apis.fnQuery(puppet, codec.layout.QueryParameters, infoPtr, stride, count, outCountPtr)
+            : apis.fnGetParameters(puppet, infoPtr, count, outCountPtr);
+          if (listResult !== codec.layout.Ok) {
+            return { result: listResult, params: [] };
+          }
+
+          const decode = queryAvailable ? codec.decodeParameterInfo : codec.decodeLegacyParameterInfo;
+          const params = [];
+          for (let i = 0; i < count; i += 1) {
+            params.push(decode(infoPtr + i * stride));
+          }
+          return { result: codec.layout.Ok, params };
+        } finally {
+          apis.free(infoPtr);
+        }
+      } finally {
+        apis.free(outCountPtr);
+      }
+    }
+
     async function ensureTrackingController(params, bindingJsonText) {
       if (!trackingController) {
         trackingController = new WebcamTrackingController({
@@ -1793,6 +1838,9 @@
         const maxY = num(p?.max?.[1], 1);
         const defX = clamp(num(p?.defaults?.[0], 0), minX, maxX);
         const defY = clamp(num(p?.defaults?.[1], 0), minY, maxY);
+        const value = Array.isArray(p?.value) ? p.value : p?.defaults;
+        const curInitialX = clamp(num(value?.[0], defX), minX, maxX);
+        const curInitialY = clamp(num(value?.[1], defY), minY, maxY);
         const isVec2 = !!p?.isVec2 && (maxY !== minY);
 
         if (isVec2) {
@@ -1811,8 +1859,8 @@
           pad.appendChild(dot);
           ctrl.appendChild(pad);
 
-          let curX = defX;
-          let curY = defY;
+          let curX = curInitialX;
+          let curY = curInitialY;
 
           const updateDotAndLabel = () => {
             const tx = (curX - minX) / Math.max(1e-6, (maxX - minX));
@@ -1854,7 +1902,6 @@
           });
 
           updateDotAndLabel();
-          onChange(p, curX, curY);
 
           row.appendChild(nameEl);
           row.appendChild(ctrl);
@@ -1872,10 +1919,10 @@
         slider.min = String(minX);
         slider.max = String(maxX);
         slider.step = "0.001";
-        slider.value = String(defX);
+        slider.value = String(curInitialX);
         slider.addEventListener("input", () => {
           const x = clamp(Number(slider.value), minX, maxX);
-          onChange(p, x, defY);
+          onChange(p, x, curInitialY);
         });
         row.appendChild(nameEl);
         row.appendChild(slider);
@@ -1962,37 +2009,22 @@
       const puppet = readU32(outPuppetPtr);
       if (!puppet) throw new Error("puppet handle is null");
 
-      if (apis.fnGetParameters && apis.fnUpdateParameters) {
+      if ((apis.fnQuery || apis.fnGetParameters) && apis.fnUpdateParameters) {
         try {
-          const outCountPtr = codec.getMalloc()(codec.layout.OutPtr);
-          Module.HEAPU32[outCountPtr >>> 2] = 0;
-          let pr = apis.fnGetParameters(puppet, 0, 0, outCountPtr);
+          const { result: pr, params } = readPuppetParameters(apis, codec, puppet);
           if (pr === codec.layout.Ok) {
-            const count = readU32(outCountPtr);
-            if (count > 0) {
-              const infoPtr = codec.getMalloc()(count * codec.layout.SizeNjgParameterInfo);
-              pr = apis.fnGetParameters(puppet, infoPtr, count, outCountPtr);
-              if (pr === codec.layout.Ok) {
-                const params = [];
-                for (let i = 0; i < count; i += 1) {
-                  params.push(codec.decodeParameterInfo(infoPtr + i * codec.layout.SizeNjgParameterInfo));
-                }
-                const trackingBindingJson = readPuppetExtData(apis, codec, puppet, TRACKING_BINDINGS_EXT_KEY);
-                await ensureTrackingController(params, trackingBindingJson);
-                createParameterControls(params, (param, x, y) => {
-                  applyParameterUpdates(apis, codec, puppet, [{ uuid: param.uuid, x, y }]);
-                });
-              } else {
-                log("WARN", "njgGetParameters(list) failed:", pr);
-              }
-              apis.free(infoPtr);
+            if (params.length > 0) {
+              const trackingBindingJson = readPuppetExtData(apis, codec, puppet, TRACKING_BINDINGS_EXT_KEY);
+              await ensureTrackingController(params, trackingBindingJson);
+              createParameterControls(params, (param, x, y) => {
+                applyParameterUpdates(apis, codec, puppet, [{ uuid: param.uuid, x, y }]);
+              });
             } else {
               paramPanel.textContent = "parameters: none";
             }
           } else {
-            log("WARN", "njgGetParameters(count) failed:", pr);
+            log("WARN", "parameter query failed:", pr);
           }
-          apis.free(outCountPtr);
         } catch (e) {
           log("WARN", "parameter UI unavailable:", String(e));
         }
