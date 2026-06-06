@@ -164,6 +164,7 @@ function makeParamMeta(param) {
   const min = Array.isArray(param?.min) ? param.min : [0, 0];
   const max = Array.isArray(param?.max) ? param.max : [1, 1];
   const defaults = Array.isArray(param?.defaults) ? param.defaults : [0, 0];
+  const value = Array.isArray(param?.value) ? param.value : defaults;
   return {
     uuid: Number(param?.uuid) >>> 0,
     name: String(param?.name || ""),
@@ -174,8 +175,8 @@ function makeParamMeta(param) {
     maxY: Number(max[1] ?? 1),
     defaultX: Number(defaults[0] ?? 0),
     defaultY: Number(defaults[1] ?? 0),
-    valueX: Number(defaults[0] ?? 0),
-    valueY: Number(defaults[1] ?? 0),
+    valueX: Number(value[0] ?? defaults[0] ?? 0),
+    valueY: Number(value[1] ?? defaults[1] ?? 0),
   };
 }
 

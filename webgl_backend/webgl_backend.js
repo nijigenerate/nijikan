@@ -2664,7 +2664,9 @@ export function createNicxWasmLayoutDefaults() {
     CommandQueueView: 8,
     SharedBufferSnapshot: 36,
     OutPtr: 4,
-    SizeNjgParameterInfo: 40,
+    QueryParameters: 1,
+    SizeNjgParameterInfo: 56,
+    LegacySizeNjgParameterInfo: 40,
     SizePuppetParameterUpdate: 12,
 
     OffQueuedPart: 4,
@@ -2980,6 +2982,21 @@ export function createNicxWasmCodec(ModuleRef, layoutOrOpts = {}, maybeOpts = {}
       max: readVec2(base + 16),
       defaults: readVec2(base + 24),
       name: readCString(readU32(base + 32), readU32(base + 36)),
+      value: readVec2(base + 40),
+      latestInternal: readVec2(base + 48),
+    };
+  }
+  function decodeLegacyParameterInfo(base) {
+    const defaults = readVec2(base + 24);
+    return {
+      uuid: readU32(base + 0),
+      isVec2: readBool(base + 4),
+      min: readVec2(base + 8),
+      max: readVec2(base + 16),
+      defaults,
+      name: readCString(readU32(base + 32), readU32(base + 36)),
+      value: defaults,
+      latestInternal: defaults,
     };
   }
   async function stageInxToMemfs(modelUrlBase) {
@@ -3009,6 +3026,7 @@ export function createNicxWasmCodec(ModuleRef, layoutOrOpts = {}, maybeOpts = {}
     decodeCommands,
     decodeSnapshot,
     decodeParameterInfo,
+    decodeLegacyParameterInfo,
     stageInxToMemfs,
   };
 }
@@ -3031,6 +3049,7 @@ export function createNicxWasmBindings(codec) {
     fnSetPuppetTranslation: codec.reqExport("njgSetPuppetTranslation"),
     fnGetWasmLayout: codec.reqExport("njgGetWasmLayout"),
     fnGetParameters: codec.optExport("njgGetParameters"),
+    fnQuery: codec.optExport("njgQuery"),
     fnUpdateParameters: codec.optExport("njgUpdateParameters"),
     fnGetPuppetExtData: codec.optExport("njgGetPuppetExtData"),
   };
