@@ -927,7 +927,7 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-06-06-36";
+    const WASM_TEST_VERSION = "wasm-index-2026-06-06-37";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
@@ -957,6 +957,8 @@
     let trackingEnabled = false;
     let trackingController = null;
     let isLaunching = false;
+    let pendingLaunchRequest = null;
+    let launchGeneration = 0;
     let wasmPrepared = false;
     let modelEntries = [];
     let modelSourceMode = "remote-list";
@@ -1444,6 +1446,10 @@
     }
 
     const lastTrackedParamValues = new Map();
+
+    function resetParameterUpdateMirror() {
+      lastTrackedParamValues.clear();
+    }
 
     function applyParameterUpdates(apis, codec, puppet, updates) {
       if (!apis?.fnUpdateParameters || !Array.isArray(updates) || updates.length === 0) return;
@@ -2070,6 +2076,8 @@
         canvas.removeEventListener("gesturestart", onTouchGestureBlock);
         canvas.removeEventListener("gesturechange", onTouchGestureBlock);
         stopBtn.disabled = true;
+        resetParameterUpdateMirror();
+        try { trackingController?.resetPendingUpdates?.(); } catch (_) {}
         if (trackingController) {
           trackingController.stop();
         }
@@ -2246,19 +2254,19 @@
 
           if (apis.fnBeginFrame(renderer, frameCfgPtr) !== codec.layout.Ok) {
             log("njgBeginFrame failed");
-            requestAnimationFrame(frame);
+            rafId = requestAnimationFrame(frame);
             return;
           }
           apis.fnTickPuppet(puppet, dt);
 
           if (apis.fnEmitCommands(renderer, cmdViewPtr) !== codec.layout.Ok) {
             log("njgEmitCommands failed");
-            requestAnimationFrame(frame);
+            rafId = requestAnimationFrame(frame);
             return;
           }
           if (apis.fnGetSharedBuffers(renderer, snapshotPtr) !== codec.layout.Ok) {
             log("njgGetSharedBuffers failed");
-            requestAnimationFrame(frame);
+            rafId = requestAnimationFrame(frame);
             return;
           }
 
@@ -2364,7 +2372,12 @@
     });
 
     async function launchSelectedModel({ forceReload = false } = {}) {
-      if (isLaunching) return;
+      if (isLaunching) {
+        pendingLaunchRequest = { forceReload: true };
+        launchGeneration += 1;
+        return;
+      }
+      const generation = ++launchGeneration;
       isLaunching = true;
       startBtn.disabled = true;
       try {
@@ -2372,16 +2385,28 @@
           try { runtimeControl.cleanup(); } catch (_) {}
           runtimeControl = null;
         }
+        resetParameterUpdateMirror();
+        try { trackingController?.resetPendingUpdates?.(); } catch (_) {}
         if (runtimeControl) {
           runtimeControl.startLoop();
           return;
         }
-        runtimeControl = await main();
+        const nextRuntime = await main();
+        if (generation !== launchGeneration) {
+          try { nextRuntime?.cleanup?.(); } catch (_) {}
+          return;
+        }
+        runtimeControl = nextRuntime;
       } catch (e) {
         log("ERROR:", String(e && e.message ? e.message : e));
       } finally {
         startBtn.disabled = false;
         isLaunching = false;
+        if (pendingLaunchRequest) {
+          const pending = pendingLaunchRequest;
+          pendingLaunchRequest = null;
+          launchSelectedModel(pending);
+        }
       }
     }
 

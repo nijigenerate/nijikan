@@ -732,7 +732,13 @@ export class WebcamTrackingController {
     this.setStatus("tracking active");
   }
 
+  resetPendingUpdates() {
+    this.latestUpdates = [];
+    this.debug.updateCount = 0;
+  }
+
   configure(params, bindingJsonText = "") {
+    this.resetPendingUpdates();
     this.params = params.map(makeParamMeta);
     this.bindingJsonText = String(bindingJsonText || "");
     this.debug.bindingMode = this.bindingJsonText ? "ext" : "none";
