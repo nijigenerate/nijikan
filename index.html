@@ -971,7 +971,10 @@
     const pageUrl = new URL(window.location.href);
     const appBaseUrl = new URL("./", pageUrl);
     const launchedAsInstalledApp = pageUrl.searchParams.get("app") === "1";
-    const forceOnlineModelList = pageUrl.searchParams.get("modelSource") === "online";
+    const initialModelUrl = String(pageUrl.searchParams.get("model") || "").trim();
+    const initialZoom = String(pageUrl.searchParams.get("zoom") || "").trim();
+    let fitOnNextLaunch = initialZoom === "fit";
+    const forceOnlineModelList = !!initialModelUrl || pageUrl.searchParams.get("modelSource") === "online";
     const isAndroid = /Android/i.test(navigator.userAgent || "");
     const installedStandalone = (() => {
       try {
@@ -1209,7 +1212,14 @@
       scaleLabel.setAttribute("for", "scale");
       scaleLabel.textContent = "Viewer scale";
       appendChildren(scaleCardContent, [scaleLabel, scaleInput, scaleVal]);
-      viewStack.appendChild(createOverlayCard("Scale", [scaleCardContent]));
+      const fitViewBtn = document.createElement("button");
+      fitViewBtn.type = "button";
+      fitViewBtn.textContent = "Fit model";
+      fitViewBtn.addEventListener("click", () => {
+        fitOnNextLaunch = true;
+        runtimeControl?.fitToView?.();
+      });
+      viewStack.appendChild(createOverlayCard("Scale", [scaleCardContent, fitViewBtn]));
       const bgCardContent = document.createElement("div");
       bgCardContent.className = "controlGrid";
       const bgLabel = document.createElement("label");
@@ -2049,6 +2059,12 @@
       let debugFrame = 0;
       let panX = 0.0;
       let panY = 0.0;
+      let autoFit = fitOnNextLaunch;
+      let fitPending = autoFit;
+      const disableAutoFit = () => { autoFit = false; fitOnNextLaunch = false; fitPending = false; };
+      scaleInput.addEventListener("input", disableAutoFit);
+      const requestedScale = Number(initialZoom);
+      if (Number.isFinite(requestedScale) && requestedScale > 0) scaleInput.value = String(requestedScale);
       const activePointers = new Map();
       let panPointerId = -1;
       let panLastX = 0;
@@ -2062,6 +2078,7 @@
         alive = false;
         running = false;
         bgColorInput?.removeEventListener("input", applyBackgroundColor);
+        scaleInput.removeEventListener("input", disableAutoFit);
         if (rafId) {
           cancelAnimationFrame(rafId);
           rafId = 0;
@@ -2135,6 +2152,7 @@
       };
 
       const onPointerDown = (ev) => {
+        disableAutoFit();
         if (ev.pointerType === "mouse" && ev.button !== 0) return;
         activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
         if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
@@ -2199,6 +2217,7 @@
         }
       };
       const onWheel = (ev) => {
+        disableAutoFit();
         ev.preventDefault();
         let deltaPx = Number(ev.deltaY) || 0;
         if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) {
@@ -2231,7 +2250,55 @@
           canvas.height = h;
           glInit.drawableW = w;
           glInit.drawableH = h;
+          if (autoFit) fitPending = true;
         }
+      }
+
+      // Use the same evaluated vertex and projection data as the renderer.
+      // Offscreen DynamicComposite children and stencil masks are not viewport bounds.
+      function fitRenderedModel(commands, snapshot) {
+        const vertices = snapshot.vertices.data;
+        const deform = snapshot.deform.data;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let compositeDepth = 0;
+        for (const command of commands) {
+          if (command.kind === NjgRenderCommandKind.BeginDynamicComposite) { compositeDepth++; continue; }
+          if (command.kind === NjgRenderCommandKind.EndDynamicComposite) { compositeDepth--; continue; }
+          if (compositeDepth > 0 || command.kind !== NjgRenderCommandKind.DrawPart) continue;
+          const packet = command.partPacket;
+          if (!packet?.renderable || packet.isMask || !(packet.opacity > 0)) continue;
+          const m = packet.modelMatrix, r = packet.renderMatrix;
+          for (const index of new Set(packet.indices || [])) {
+            const vi = packet.vertexOffset + index, di = packet.deformOffset + index;
+            const x = vertices[vi] - packet.origin[0] + deform[di];
+            const y = vertices[packet.vertexAtlasStride + vi] - packet.origin[1] + deform[packet.deformAtlasStride + di];
+            const wx = m[0] * x + m[1] * y + m[3];
+            const wy = m[4] * x + m[5] * y + m[7];
+            const wz = m[8] * x + m[9] * y + m[11];
+            const ww = m[12] * x + m[13] * y + m[15];
+            const cw = r[12] * wx + r[13] * wy + r[14] * wz + r[15] * ww;
+            if (!Number.isFinite(cw) || Math.abs(cw) < 1e-8) continue;
+            const px = ((r[0] * wx + r[1] * wy + r[2] * wz + r[3] * ww) / cw + 1) * canvas.width / 2;
+            const py = (1 - (r[4] * wx + r[5] * wy + r[6] * wz + r[7] * ww) / cw) * canvas.height / 2;
+            if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+            minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+            minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+          }
+        }
+        const width = maxX - minX, height = maxY - minY;
+        if (!(width > 0) || !(height > 0) || !Number.isFinite(width + height)) return;
+        const previousScale = currentScale();
+        const requested = previousScale * 0.94 * Math.min(canvas.width / width, canvas.height / height);
+        // Fit can require a smaller/larger scale than the manual slider's initial range.
+        scaleInput.min = String(Math.min(Number(scaleInput.min), requested));
+        scaleInput.max = String(Math.max(Number(scaleInput.max), requested));
+        scaleInput.step = "any";
+        scaleInput.value = String(requested);
+        const ratio = currentScale() / previousScale;
+        panX = (panX + canvas.width / 2 - (minX + maxX) / 2) * ratio;
+        panY = (panY + canvas.height / 2 - (minY + maxY) / 2) * ratio;
+        fitPending = false;
+        applyPanScale();
       }
 
       function frame(now) {
@@ -2286,6 +2353,7 @@
               "drawPart", drawPartCount, "v/uv/d", snapshot.vertices.data.length, snapshot.uvs.data.length, snapshot.deform.data.length);
           }
 
+          if (fitPending) fitRenderedModel(commands, snapshot);
           renderCommands(glInit, snapshot, { commands });
         } catch (e) {
           log("frame error:", String(e && e.message ? e.message : e));
@@ -2312,7 +2380,7 @@
 
       log("renderer ready, commands loop started");
       startLoop();
-      return { startLoop, stopLoop, cleanup };
+      return { startLoop, stopLoop, cleanup, fitToView() { autoFit = true; fitPending = true; startLoop(); } };
     }
 
     async function refreshModelListUI() {
@@ -2560,7 +2628,13 @@
     refreshFpsCounterBar();
     wakeNavigation();
     const initModelList = await refreshModelListUI();
-    if (initModelList?.source === "manifest" && (initModelList.count | 0) >= 2) {
+    if (initialModelUrl) {
+      setModelSourceMode("remote-list");
+      modelCombo.value = initialModelUrl;
+      closeModelOptions();
+      closeOverlay();
+      launchSelectedModel({ forceReload: false });
+    } else if (initModelList?.source === "manifest" && (initModelList.count | 0) >= 2) {
       launchSelectedModel({ forceReload: false });
     }
   </script>
