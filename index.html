@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-10-21-1" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-10-22-1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -896,7 +896,6 @@
     <button id="refreshModels">refresh</button>
     <button id="start">start</button>
     <button id="stop" disabled>stop</button>
-    <button id="hideModel" disabled>hide model</button>
     <button id="trackingToggle">tracking</button>
     <span id="trackingStatus">tracking off</span>
     <label><input id="trackingInvertHorizontal" type="checkbox" /> flip</label>
@@ -928,14 +927,13 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-10-21-1";
+    const WASM_TEST_VERSION = "wasm-index-2026-10-22-1";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
     const canvas = document.getElementById("cv");
     const startBtn = document.getElementById("start");
     const stopBtn = document.getElementById("stop");
-    const hideModelBtn = document.getElementById("hideModel");
     const trackingToggleBtn = document.getElementById("trackingToggle");
     const trackingStatusEl = document.getElementById("trackingStatus");
     const trackingInvertHorizontalInput = document.getElementById("trackingInvertHorizontal");
@@ -1147,7 +1145,7 @@
       modelsStack.appendChild(createOverlayCard("Source", [modelSourceGrid]));
       const modelActionRow = document.createElement("div");
       modelActionRow.className = "buttonRow";
-      appendChildren(modelActionRow, [refreshModelsBtn, startBtn, stopBtn, hideModelBtn]);
+      appendChildren(modelActionRow, [refreshModelsBtn, startBtn, stopBtn]);
       modelsStack.appendChild(createOverlayCard("Actions", [modelActionRow]));
 
       makeSection("params");
@@ -2086,7 +2084,6 @@
         release(() => apis.fnRtTerm());
         window.removeEventListener("beforeunload", cleanup);
         stopBtn.onclick = null;
-        hideModelBtn.disabled = true;
         paramPanel.replaceChildren();
         for (const ptr of [cfgPtr, cbPtr, outRendererPtr, outPuppetPtr, frameCfgPtr, cmdViewPtr, snapshotPtr]) release(() => apis.free(ptr));
         for (const ptr of [createTexturePtr, updateTexturePtr, releaseTexturePtr]) release(() => Module.removeFunction(ptr));
@@ -2325,7 +2322,6 @@
         }
       };
       stopBtn.onclick = stopLoop;
-      hideModelBtn.disabled = false;
 
       log("renderer ready, commands loop started");
       startLoop();
@@ -2411,13 +2407,6 @@
       }
     }
 
-    hideModelBtn.addEventListener("click", () => {
-      wakeNavigation();
-      if (isLaunching || !runtimeControl) return;
-      const previous = runtimeControl;
-      runtimeControl = null;
-      try { previous.cleanup(); } catch (error) { log("ERROR:", String(error)); }
-    });
     startBtn.addEventListener("click", () => {
       wakeNavigation();
       launchSelectedModel({ forceReload: false });

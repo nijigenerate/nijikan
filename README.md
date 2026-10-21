@@ -47,19 +47,18 @@ cross-browser verification. Webcam tracking was not tested in this change.
 
 ## Model lifetime verification
 
-`stop` pauses updates. `hide model` unloads the current puppet and releases its
+`stop` pauses updates. Selecting another model releases the previous puppet,
 renderer, GPU objects, host-allocated WASM work areas, callback registrations and
 parameter controls. The WASM instance and WebAssembly.Memory remain alive.
-Selecting another model also releases the previous display resources first.
 Cleanup errors are reported and prevent silently proceeding with a replacement.
 
 ```powershell
 node scripts/test_model_lifetime.cjs APP_URL MODEL_A_URL MODEL_B_URL test-output/lifetime
 ```
 
-This test performs seven displays with intervening hides. It asserts that the
-same module and Memory remain in use, unload calls succeed, and tracked GPU
-objects, JS-host malloc blocks and callback registrations return to zero after
-each hide. It records screenshots and result.json. Host malloc tracking does not
-measure every C++ allocation; Memory capacity is recorded separately and is not
-expected to shrink after free.
+The test alternates two models seven times through the existing model selector,
+checks parameter controls and stop state, and captures the displayed page.
+It uses the served product page without injected runtime/API replacements or a
+forced software renderer. It does not prove that all allocations are released.
+With NICXLIVE_EXPECTED_REVISION set, it also verifies the build revision and the
+hashes of the JS/WASM bytes actually loaded by the browser.
