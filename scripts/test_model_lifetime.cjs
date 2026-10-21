@@ -5,6 +5,22 @@ if (!appUrl || !modelA || !modelB) throw new Error('Usage: node scripts/test_mod
 fs.mkdirSync(output,{recursive:true});
 (async()=>{const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH ? {executablePath:process.env.CHROMIUM_PATH} : {}),args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});try{
 const page=await browser.newPage({viewport:{width:1100,height:900},serviceWorkers:'block'});const logs=[];page.on('console',m=>logs.push(m.type()+': '+m.text()));page.on('pageerror',e=>logs.push('ERROR '+e.message));
+const expectedRevision=process.env.NICXLIVE_EXPECTED_REVISION;
+const artifactChecks=[];let buildInfo;
+if(expectedRevision){
+ const response=await page.request.get(new URL('wasm/build-info.json',appUrl).href);
+ assert(response.ok(),'WASM build provenance unavailable');
+ buildInfo=JSON.parse((await response.text()).replace(/^\uFEFF/,''));
+ assert.equal(buildInfo.revision,expectedRevision,'Unexpected nicxlive revision');
+ assert.equal(buildInfo.sourceModified,false,'WASM built from modified source');
+ page.on('response',response=>{
+  const file=new URL(response.url()).pathname.split('/').pop();
+  if(file==='nicxlive.js'||file==='nicxlive.wasm'){
+   const checked=response.body().then(body=>({file,sha256:require('node:crypto').createHash('sha256').update(body).digest('hex')}));
+   artifactChecks.push(checked);
+  }
+ });
+}
 await page.addInitScript(()=>{window.audit={draws:0,errors:[],sets:{}};for(const kind of ['Texture','Buffer','Framebuffer','Program','VertexArray']){const set=new Set();window.audit.sets[kind]=set;const p=WebGL2RenderingContext.prototype,c=p['create'+kind],d=p['delete'+kind];p['create'+kind]=function(...a){const o=c.apply(this,a);if(o)set.add(o);return o};p['delete'+kind]=function(o){set.delete(o);return d.call(this,o)}};for(const name of ['drawElements','drawArrays']){const orig=WebGL2RenderingContext.prototype[name];WebGL2RenderingContext.prototype[name]=function(...a){orig.apply(this,a);window.audit.draws++;const e=this.getError();if(e)window.audit.errors.push(e)}}});
 await page.addInitScript(()=>{
  window.lifetimeAudit={instances:0,unloads:[],destroyed:0,allocations:new Set(),callbacks:new Set(),memory:null,module:null};
@@ -42,5 +58,13 @@ for(let i=0;i<urls.length;i++){
 
 }
 assert(!logs.some(x=>/ERROR|frame error|GL_INVALID/.test(x)),logs.join('\n'));
-fs.writeFileSync(output+'/result.json',JSON.stringify({results,logs},null,2));console.log(JSON.stringify({results,logs}));
+const loadedArtifacts=await Promise.all(artifactChecks);
+if(expectedRevision){
+ for(const file of ['nicxlive.js','nicxlive.wasm']){
+  const matches=loadedArtifacts.filter(x=>x.file===file);
+  assert(matches.length>0,'Browser did not load '+file);
+  for(const actual of matches)assert.equal(actual.sha256,buildInfo.sha256[file].toLowerCase(),'Loaded artifact differs from build: '+file);
+ }
+}
+fs.writeFileSync(output+'/result.json',JSON.stringify({buildInfo,loadedArtifacts,results,logs},null,2));console.log(JSON.stringify({results,logs}));
 }finally{await browser.close()}})().catch(e=>{console.error(e);process.exit(1)});
