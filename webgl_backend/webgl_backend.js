@@ -2166,8 +2166,8 @@ void main() {
     const readbackTexturesByHandle = activeDyn?.readbackTexturesByHandle || null;
     const textureKey = `${Number(packet.textureHandles?.[0] || 0)}:${Number(packet.textureHandles?.[1] || 0)}:${Number(packet.textureHandles?.[2] || 0)}:${textureCount}`;
     if (this.boundTextureKey !== textureKey) {
-      for (let i = 0; i < textureCount; i += 1) {
-        const h = Number(packet.textureHandles?.[i] || 0);
+      for (let i = 0; i < 3; i += 1) {
+        const h = i < textureCount ? Number(packet.textureHandles?.[i] || 0) : 0;
         let overrideTex = null;
         if (readbackTexturesByHandle && readbackTexturesByHandle.has(h)) {
           overrideTex = readbackTexturesByHandle.get(h);
@@ -2241,6 +2241,8 @@ void main() {
       const gl = this.gl;
       const baseTex = texturesByHandle.get(surface.textureHandles[0]);
       if (baseTex) {
+        const previousDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING);
+        const previousRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
         fbo = gl.createFramebuffer();
         gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         for (let i = 0; i < surface.textureCount; i += 1) {
@@ -2273,6 +2275,8 @@ void main() {
           gl.deleteFramebuffer(fbo);
           fbo = null;
         }
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, previousDraw);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, previousRead);
       }
       if (fbo) this.dynamicFramebufferCache.set(key, fbo);
     }
@@ -2823,6 +2827,23 @@ export function createNicxWasmCodec(ModuleRef, layoutOrOpts = {}, maybeOpts = {}
       offDynDrawBufferCount: readU32(layoutPtr + 168),
       offDynHasStencil: readU32(layoutPtr + 172),
     };
+    // The decoder below uses wasm32 pointers and the fixed v1 packet prefixes.
+    // Refuse incompatible layouts rather than decoding arbitrary heap bytes.
+    const groups = [
+      ["Queued", L.sizeQueued, [[L.offQueuedPart,L.sizePart],[L.offQueuedMaskApply,L.sizeMaskApply],[L.offQueuedDynamic,L.sizeDynamicPass],[L.offQueuedUsesStencil,1]]],
+      ["Part", L.sizePart, [[L.offPartTextureHandles,12],[L.offPartTextureCount,4],[L.offPartOrigin,8], ...[L.offPartVertexOffset,L.offPartVertexStride,L.offPartUvOffset,L.offPartUvStride,L.offPartDeformOffset,L.offPartDeformStride,L.offPartIndexHandle,L.offPartIndicesPtr,L.offPartIndexCount,L.offPartVertexCount].map(x=>[x,4])]],
+      ["MaskDraw", L.sizeMaskDraw, [L.offMaskDrawIndicesPtr,L.offMaskDrawIndexCount,L.offMaskDrawVertexOffset,L.offMaskDrawVertexStride,L.offMaskDrawDeformOffset,L.offMaskDrawDeformStride,L.offMaskDrawIndexHandle,L.offMaskDrawVertexCount].map(x=>[x,4])],
+      ["MaskApply", L.sizeMaskApply, [[L.offMaskKind,4],[L.offMaskIsDodge,1],[L.offMaskPartPacket,L.sizePart],[L.offMaskMaskPacket,L.sizeMaskDraw]]],
+      ["DynamicPass", L.sizeDynamicPass, [[L.offDynTextures,12],[L.offDynTextureCount,4],[L.offDynStencil,4],[L.offDynScale,8],[L.offDynRotationZ,4],[L.offDynAutoScaled,1],[L.offDynOrigBuffer,4],[L.offDynOrigViewport,16],[L.offDynDrawBufferCount,4],[L.offDynHasStencil,1]]],
+    ];
+    for (const [name,size,fields] of groups) {
+      if (!size || size > 4096 || fields.some(([offset,width]) => offset + width > size)) {
+        throw new Error(`Incompatible nicxlive WASM layout: ${name}`);
+      }
+    }
+    if (L.offPartTextureHandles !== 180 || L.offMaskDrawVertexOffset !== 136) {
+      throw new Error("Incompatible nicxlive WASM packet prefix; update the WebGL decoder");
+    }
     K.SizeQueued = L.sizeQueued;
     K.OffQueuedPart = L.offQueuedPart;
     K.OffQueuedMaskApply = L.offQueuedMaskApply;
@@ -3045,6 +3066,7 @@ export function createNicxWasmBindings(codec) {
     fnTickPuppet: codec.reqExport("njgTickPuppet"),
     fnEmitCommands: codec.reqExport("njgEmitCommands"),
     fnGetSharedBuffers: codec.reqExport("njgGetSharedBuffers"),
+    fnFlushCommands: codec.reqExport("njgFlushCommandBuffer"),
     fnSetPuppetScale: codec.reqExport("njgSetPuppetScale"),
     fnSetPuppetTranslation: codec.reqExport("njgSetPuppetTranslation"),
     fnGetWasmLayout: codec.reqExport("njgGetWasmLayout"),

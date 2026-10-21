@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="nicxlive" />
-  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-06-06-36" />
+  <link rel="manifest" href="./manifest.webmanifest?v=wasm-index-2026-10-21-1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1&display=swap" rel="stylesheet" />
@@ -896,6 +896,7 @@
     <button id="refreshModels">refresh</button>
     <button id="start">start</button>
     <button id="stop" disabled>stop</button>
+    <button id="hideModel" disabled>hide model</button>
     <button id="trackingToggle">tracking</button>
     <span id="trackingStatus">tracking off</span>
     <label><input id="trackingInvertHorizontal" type="checkbox" /> flip</label>
@@ -927,13 +928,14 @@
       createNicxWasmBindings,
     } from "./webgl_backend/webgl_backend.js";
     import { WebcamTrackingController } from "./tracking/tracking_runtime.js";
-    const WASM_TEST_VERSION = "wasm-index-2026-06-06-36";
+    const WASM_TEST_VERSION = "wasm-index-2026-10-21-1";
     const WASM_TEST_LOG_ENABLED = false;
     const TRACKING_BINDINGS_EXT_KEY = "com.inochi2d.inochi-session.bindings";
     const logEl = document.getElementById("log");
     const canvas = document.getElementById("cv");
     const startBtn = document.getElementById("start");
     const stopBtn = document.getElementById("stop");
+    const hideModelBtn = document.getElementById("hideModel");
     const trackingToggleBtn = document.getElementById("trackingToggle");
     const trackingStatusEl = document.getElementById("trackingStatus");
     const trackingInvertHorizontalInput = document.getElementById("trackingInvertHorizontal");
@@ -1145,7 +1147,7 @@
       modelsStack.appendChild(createOverlayCard("Source", [modelSourceGrid]));
       const modelActionRow = document.createElement("div");
       modelActionRow.className = "buttonRow";
-      appendChildren(modelActionRow, [refreshModelsBtn, startBtn, stopBtn]);
+      appendChildren(modelActionRow, [refreshModelsBtn, startBtn, stopBtn, hideModelBtn]);
       modelsStack.appendChild(createOverlayCard("Actions", [modelActionRow]));
 
       makeSection("params");
@@ -1422,7 +1424,7 @@
       wasmPrepared = true;
     }
     function log(...args) {
-      if (!WASM_TEST_LOG_ENABLED) return;
+      if (!WASM_TEST_LOG_ENABLED && !/error|failed/i.test(String(args[0] || ""))) return;
       const s = args.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
       logEl.textContent += s + "\n";
       logEl.scrollTop = logEl.scrollHeight;
@@ -1956,9 +1958,10 @@
 
       const layoutPtr = codec.getMalloc()(codec.layout.SizeWasmLayout);
       const layoutRes = apis.fnGetWasmLayout(layoutPtr);
-      if (layoutRes === codec.layout.Ok) codec.applyWasmLayout(layoutPtr);
-      else log("WARN", "njgGetWasmLayout failed:", layoutRes);
-      apis.free(layoutPtr);
+      try {
+        if (layoutRes !== codec.layout.Ok) throw new Error(`njgGetWasmLayout failed: ${layoutRes}`);
+        codec.applyWasmLayout(layoutPtr);
+      } finally { apis.free(layoutPtr); }
 
       const createTexturePtr = addFunction((w, h, ch, mip, fmt, rt, st, userData) => {
         return backendCallbacks.createTexture(w, h, ch, mip, fmt, !!rt, !!st) >>> 0;
@@ -2073,9 +2076,28 @@
         if (trackingController) {
           trackingController.stop();
         }
-        try { apis.fnUnloadPuppet(renderer, puppet); } catch (_) {}
-        try { apis.fnDestroyRenderer(renderer); } catch (_) {}
-        try { apis.fnRtTerm(); } catch (_) {}
+        const releaseErrors = [];
+        const release = (action) => { try { action(); } catch (error) { releaseErrors.push(String(error)); } };
+        release(() => {
+          const result = apis.fnUnloadPuppet(renderer, puppet);
+          if (result !== codec.layout.Ok) throw new Error(`njgUnloadPuppet failed: ${result}`);
+        });
+        release(() => apis.fnDestroyRenderer(renderer));
+        release(() => apis.fnRtTerm());
+        window.removeEventListener("beforeunload", cleanup);
+        stopBtn.onclick = null;
+        hideModelBtn.disabled = true;
+        paramPanel.replaceChildren();
+        for (const ptr of [cfgPtr, cbPtr, outRendererPtr, outPuppetPtr, frameCfgPtr, cmdViewPtr, snapshotPtr]) release(() => apis.free(ptr));
+        for (const ptr of [createTexturePtr, updateTexturePtr, releaseTexturePtr]) release(() => Module.removeFunction(ptr));
+        release(() => glInit.backend.dispose());
+        const gl = glInit.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.disable(gl.SCISSOR_TEST);
+        gl.colorMask(true, true, true, true);
+        gl.clearColor(...glInit.backend.clearColor);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        if (releaseErrors.length) throw new Error(`Model cleanup failed: ${releaseErrors.join("; ")}`);
       };
       window.addEventListener("beforeunload", cleanup);
 
@@ -2249,7 +2271,8 @@
             requestAnimationFrame(frame);
             return;
           }
-          apis.fnTickPuppet(puppet, dt);
+          const tickResult = apis.fnTickPuppet(puppet, dt);
+          if (tickResult !== codec.layout.Ok) throw new Error(`njgTickPuppet failed: ${tickResult}`);
 
           if (apis.fnEmitCommands(renderer, cmdViewPtr) !== codec.layout.Ok) {
             log("njgEmitCommands failed");
@@ -2278,7 +2301,8 @@
               "drawPart", drawPartCount, "v/uv/d", snapshot.vertices.data.length, snapshot.uvs.data.length, snapshot.deform.data.length);
           }
 
-          renderCommands(glInit, snapshot, { commands });
+          try { renderCommands(glInit, snapshot, { commands }); }
+          finally { apis.fnFlushCommands(renderer); }
         } catch (e) {
           log("frame error:", String(e && e.message ? e.message : e));
         }
@@ -2301,6 +2325,7 @@
         }
       };
       stopBtn.onclick = stopLoop;
+      hideModelBtn.disabled = false;
 
       log("renderer ready, commands loop started");
       startLoop();
@@ -2369,8 +2394,9 @@
       startBtn.disabled = true;
       try {
         if (runtimeControl && forceReload) {
-          try { runtimeControl.cleanup(); } catch (_) {}
+          const previous = runtimeControl;
           runtimeControl = null;
+          previous.cleanup();
         }
         if (runtimeControl) {
           runtimeControl.startLoop();
@@ -2385,6 +2411,13 @@
       }
     }
 
+    hideModelBtn.addEventListener("click", () => {
+      wakeNavigation();
+      if (isLaunching || !runtimeControl) return;
+      const previous = runtimeControl;
+      runtimeControl = null;
+      try { previous.cleanup(); } catch (error) { log("ERROR:", String(error)); }
+    });
     startBtn.addEventListener("click", () => {
       wakeNavigation();
       launchSelectedModel({ forceReload: false });
